@@ -1,6 +1,6 @@
 # DevOps Daily challenges
 
-Fix a real thing, open a pull request, and CI grades it.
+Fix a real thing, open a pull request, and CI grades it!
 
 Each challenge is a folder with something broken or unfinished in it: a bloated Dockerfile, a half-written script, a Deployment that never comes up. You fix it in your fork and open a PR against this repo. A GitHub Actions workflow grades the PR, comments pass or fail for each check, and closes the PR when you pass. Submissions are never merged.
 
