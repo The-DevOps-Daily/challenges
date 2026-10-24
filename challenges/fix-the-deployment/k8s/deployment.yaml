@@ -18,8 +18,17 @@ spec:
         runAsNonRoot: true
         seccompProfile:
           type: RuntimeDefault
+      volumes:
+        - name: fake
+          configMap:
+            name: fake-server
+            defaultMode: 0755
       containers:
         - name: api
+          command: ["/fake/server"]
+          volumeMounts:
+            - name: fake
+              mountPath: /fake
           image: devops-daily/inventory-api:1.0
           imagePullPolicy: IfNotPresent
           securityContext:
@@ -34,10 +43,10 @@ spec:
               valueFrom:
                 configMapKeyRef:
                   name: inventory-config
-                  key: store_name
+                  key: store-name
           readinessProbe:
             httpGet:
-              path: /health
+              path: /healthz
               port: 8080
             periodSeconds: 5
           livenessProbe:
