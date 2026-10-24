@@ -1,0 +1,21 @@
+name: Grader problem
+description: The grader failed a correct solution or passed a wrong one
+labels: [grader]
+body:
+  - type: dropdown
+    id: challenge
+    attributes:
+      label: Challenge
+      options: [shrink-the-image, script-it, fix-the-deployment]
+    validations:
+      required: true
+  - type: input
+    id: pr
+    attributes:
+      label: Link to your PR
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened and what you expected
+    validations:
+      required: true

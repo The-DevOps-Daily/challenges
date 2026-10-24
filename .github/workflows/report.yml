@@ -1,0 +1,51 @@
+# Comments the grade on the PR, labels it, and closes it when it passed.
+#
+# Runs from main after the Grade workflow finishes. The grade artifact comes
+# from a run that a PR started, so report.py treats it as untrusted data: it
+# never runs anything from it, validates its schema, and takes the PR, its
+# head SHA and its changed files from the workflow_run event and the GitHub
+# API. It never checks out or merges PR code.
+name: Report
+
+on:
+  workflow_run: # zizmor: ignore[dangerous-triggers] reads the artifact as data only; see report.py
+    workflows: [Grade]
+    types: [completed]
+
+permissions: {}
+
+concurrency:
+  group: report-${{ github.event.workflow_run.head_repository.full_name }}-${{ github.event.workflow_run.head_branch }}
+  cancel-in-progress: false
+
+jobs:
+  report:
+    name: Report the grade
+    if: github.event.workflow_run.event == 'pull_request' && github.event.workflow_run.conclusion != 'cancelled'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read # check out the reporter from main
+      actions: read # download the grade artifact
+      pull-requests: write # comment, label and close the PR
+    steps:
+      - name: Check out the reporter from main
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          persist-credentials: false
+
+      - name: Report
+        timeout-minutes: 3
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+          RUN_PATH: ${{ github.event.workflow_run.path }}
+          RUN_EVENT: ${{ github.event.workflow_run.event }}
+          RUN_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          HEAD_OWNER: ${{ github.event.workflow_run.head_repository.owner.login }}
+          HEAD_REPO: ${{ github.event.workflow_run.head_repository.full_name }}
+          HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+        run: python3 scripts/report.py

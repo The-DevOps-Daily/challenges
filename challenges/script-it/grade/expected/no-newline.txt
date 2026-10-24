@@ -1,0 +1,13 @@
+requests: 2
+unique_ips: 2
+status_2xx: 1
+status_3xx: 0
+status_4xx: 1
+status_5xx: 0
+skipped: 0
+top_ips:
+1 10.0.0.5
+1 10.0.0.6
+top_paths:
+1 /a
+1 /b

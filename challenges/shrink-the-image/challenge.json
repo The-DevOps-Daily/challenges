@@ -1,0 +1,36 @@
+{
+  "id": "shrink-the-image",
+  "title": "Shrink the image",
+  "summary": "A small Flask app ships in a container image of more than 1 GB that runs as root. Rewrite the Dockerfile so the image is under 200 MB, runs as a normal user and still works.",
+  "difficulty": "starter",
+  "minutes": 30,
+  "tags": ["docker", "containers", "dockerfile", "python", "security"],
+  "solution_paths": ["Dockerfile", ".dockerignore"],
+  "checks": [
+    {
+      "id": "build",
+      "name": "The image builds",
+      "description": "docker build finishes within 10 minutes on a GitHub-hosted ubuntu-24.04 runner. A # syntax= line may only name docker/dockerfile."
+    },
+    {
+      "id": "size",
+      "name": "Under 200 MB",
+      "description": "The image is at most 200 MB (200,000,000 bytes), as docker image inspect reports it."
+    },
+    {
+      "id": "non-root",
+      "name": "Runs as a non-root user",
+      "description": "The image sets a USER that is not root, and no process in the running container has UID 0."
+    },
+    {
+      "id": "starts",
+      "name": "Starts and answers /health",
+      "description": "The container, started with no extra arguments, answers GET /health on port 8000 with HTTP 200 within 20 seconds."
+    },
+    {
+      "id": "works",
+      "name": "The app still works",
+      "description": "GET /slugify?text=... returns the right slug for a random text, so the image runs the real app."
+    }
+  ]
+}

@@ -1,0 +1,36 @@
+{
+  "id": "fix-the-deployment",
+  "title": "Fix the deployment",
+  "summary": "An inventory API never comes up on Kubernetes. Find and fix the bugs in its Deployment, Service and ConfigMap until the rollout finishes and the Service answers.",
+  "difficulty": "intermediate",
+  "minutes": 45,
+  "tags": ["kubernetes", "kubectl", "debugging", "deployments", "services", "probes"],
+  "solution_paths": ["k8s/*.yaml", "k8s/*.yml"],
+  "checks": [
+    {
+      "id": "manifests",
+      "name": "The manifests apply",
+      "description": "The files in k8s/ parse and apply, and only define the inventory-api Deployment and Service plus ConfigMaps. The image, the 2 replicas and both probes stay in place, and pods stay off the node's namespaces and files."
+    },
+    {
+      "id": "rollout",
+      "name": "The rollout finishes",
+      "description": "kubectl rollout status for deployment/inventory-api succeeds within 120 seconds, with 2 of 2 replicas ready."
+    },
+    {
+      "id": "endpoints",
+      "name": "The Service has endpoints",
+      "description": "The inventory-api Service routes to at least one ready pod."
+    },
+    {
+      "id": "answers",
+      "name": "The Service answers",
+      "description": "GET / on port 80 of the Service's cluster IP answers HTTP 200 with the store name from the ConfigMap."
+    },
+    {
+      "id": "stable",
+      "name": "The pods stay up",
+      "description": "No container restarts, checked 30 seconds after the rollout and the other checks."
+    }
+  ]
+}

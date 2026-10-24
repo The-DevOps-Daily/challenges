@@ -1,0 +1,71 @@
+# Lints the workflows and the grader, and runs the grader's unit tests.
+name: Lint
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/**"
+      - "scripts/**"
+      - "tests/**"
+      - "challenges/*/grade/**"
+      - "challenges/*/challenge.json"
+
+permissions: {}
+
+concurrency:
+  group: lint-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: Lint and test the grader
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read # check out the code to lint
+    env:
+      ACTIONLINT_VERSION: 1.7.12
+      ACTIONLINT_SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
+      ZIZMOR_VERSION: 1.30.1
+      ZIZMOR_SHA256: eee12266b793cb87ad4a7e3af2e72404f8a63e3de5eb099b80bf7b1cfd232a8e
+      SHELLCHECK_VERSION: 0.11.0
+      SHELLCHECK_SHA256: 8c3be12b05d5c177a04c29e3c78ce89ac86f1595681cab149b65b97c4e227198
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install pinned linters
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/bin"
+          cd "$RUNNER_TEMP"
+          curl -fsSLo actionlint.tgz "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          echo "${ACTIONLINT_SHA256}  actionlint.tgz" | sha256sum --check
+          tar -xzf actionlint.tgz -C bin actionlint
+          curl -fsSLo zizmor.whl "https://files.pythonhosted.org/packages/py3/z/zizmor/zizmor-${ZIZMOR_VERSION}-py3-none-manylinux_2_28_x86_64.whl"
+          echo "${ZIZMOR_SHA256}  zizmor.whl" | sha256sum --check
+          python3 -c 'import sys, zipfile; z = zipfile.ZipFile(sys.argv[1]); open("bin/zizmor", "wb").write(z.read(f"zizmor-{sys.argv[2]}.data/scripts/zizmor"))' zizmor.whl "$ZIZMOR_VERSION"
+          curl -fsSLo shellcheck.txz "https://github.com/koalaman/shellcheck/releases/download/v${SHELLCHECK_VERSION}/shellcheck-v${SHELLCHECK_VERSION}.linux.x86_64.tar.xz"
+          echo "${SHELLCHECK_SHA256}  shellcheck.txz" | sha256sum --check
+          tar -xJf shellcheck.txz -C bin --strip-components=1 "shellcheck-v${SHELLCHECK_VERSION}/shellcheck"
+          chmod +x bin/*
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+
+      - name: actionlint
+        run: actionlint -color
+
+      - name: zizmor
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: zizmor --min-severity informational .github/workflows
+
+      - name: ShellCheck the grader scripts
+        run: shellcheck --norc --severity=style --external-sources scripts/*.sh challenges/*/grade/*.sh
+
+      - name: Unit tests
+        run: python3 -m unittest discover -s tests -v

@@ -1,0 +1,42 @@
+# Publishes pass counts to the stats branch for devops-daily.com/challenges.
+#
+# It reads only labels and authors through the API. It never downloads
+# artifacts or checks out PR code, so the workflow_run trigger is only a
+# signal to recount.
+name: Stats
+
+on:
+  workflow_run: # zizmor: ignore[dangerous-triggers] only a signal to recount; reads labels through the API
+    workflows: [Report]
+    types: [completed]
+  schedule:
+    - cron: "23 4 * * *"
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: stats
+  cancel-in-progress: false
+
+jobs:
+  stats:
+    name: Count passes
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: write # write stats.json and passes.json to the stats branch
+      issues: read # list PRs labeled passed through the issues API
+      pull-requests: read # read the PRs behind those labels
+    steps:
+      - name: Check out the scripts from main
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          persist-credentials: false
+
+      - name: Count passes and update the stats branch
+        timeout-minutes: 3
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/stats.py

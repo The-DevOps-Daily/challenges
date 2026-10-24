@@ -1,0 +1,46 @@
+name: Challenge proposal
+description: Propose a new challenge
+labels: [proposal]
+body:
+  - type: input
+    id: title
+    attributes:
+      label: Title
+      placeholder: "Fix the flaky pipeline"
+    validations:
+      required: true
+  - type: dropdown
+    id: difficulty
+    attributes:
+      label: Level
+      options: [starter, intermediate, advanced]
+    validations:
+      required: true
+  - type: textarea
+    id: situation
+    attributes:
+      label: The situation
+      description: What is broken or unfinished, and why it matters. Write it like a ticket.
+    validations:
+      required: true
+  - type: textarea
+    id: checks
+    attributes:
+      label: What the grader checks
+      description: One line per check. How does each check avoid hardcoded answers?
+    validations:
+      required: true
+  - type: textarea
+    id: runner
+    attributes:
+      label: How it runs in CI
+      description: Tools and images it needs on a GitHub-hosted ubuntu-24.04 runner, and roughly how long grading takes.
+  - type: checkboxes
+    id: rules
+    attributes:
+      label: Checklist
+      options:
+        - label: It needs no cloud account, paid service or secret.
+          required: true
+        - label: Submitted code can run in a container or a throwaway cluster, not on the runner.
+          required: true

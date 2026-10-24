@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Found a way to fake a pass?
+    url: https://github.com/The-DevOps-Daily/challenges/security/advisories/new
+    about: Report it privately so it can be fixed before it is public.

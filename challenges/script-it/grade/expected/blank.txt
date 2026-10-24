@@ -1,0 +1,9 @@
+requests: 0
+unique_ips: 0
+status_2xx: 0
+status_3xx: 0
+status_4xx: 0
+status_5xx: 0
+skipped: 0
+top_ips:
+top_paths:

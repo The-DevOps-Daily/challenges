@@ -1,0 +1,51 @@
+{
+  "id": "script-it",
+  "title": "Script it: summarize an access log",
+  "summary": "Finish a half-written Bash script that turns a web server access log into a short report, with ShellCheck clean and tests for the edge cases.",
+  "difficulty": "starter",
+  "minutes": 45,
+  "tags": ["bash", "shell", "awk", "shellcheck", "linux", "logs"],
+  "solution_paths": ["summarize.sh"],
+  "checks": [
+    {
+      "id": "shellcheck",
+      "name": "ShellCheck is clean",
+      "description": "ShellCheck 0.11 reports no issues at any severity, and the script does not switch checks off with disable directives."
+    },
+    {
+      "id": "report",
+      "name": "Report for a known log",
+      "description": "Prints the exact report for a small log with a known answer."
+    },
+    {
+      "id": "edge-cases",
+      "name": "Edge cases",
+      "description": "Skips malformed lines, ignores empty lines, strips query strings, breaks ties in byte order, counts a last line with no newline and handles an empty log."
+    },
+    {
+      "id": "input",
+      "name": "File or stdin",
+      "description": "Reads the log from a file, from stdin when no file is given or the file is -, and from a file name with a space in it."
+    },
+    {
+      "id": "arguments",
+      "name": "Options and usage errors",
+      "description": "Supports -n N for the length of the top lists, and exits 2 with a message on stderr for a bad -n value, an unknown option or more than one file."
+    },
+    {
+      "id": "errors",
+      "name": "Unreadable input",
+      "description": "Exits 1 with a message on stderr, and prints nothing on stdout, when the log file is missing, unreadable or a directory."
+    },
+    {
+      "id": "random",
+      "name": "Random logs",
+      "description": "Gives the right report for three logs generated at random during grading, so the answers cannot be known in advance."
+    },
+    {
+      "id": "speed",
+      "name": "Speed",
+      "description": "Summarizes a 100,000-line log correctly in under 10 seconds."
+    }
+  ]
+}

@@ -1,0 +1,16 @@
+requests: 7
+unique_ips: 4
+status_2xx: 4
+status_3xx: 1
+status_4xx: 1
+status_5xx: 1
+skipped: 6
+top_ips:
+2 10.0.0.10
+2 10.0.0.3
+2 10.0.0.9
+1 2001:db8::7
+top_paths:
+3 /search
+2 /api/config
+2 /docs
