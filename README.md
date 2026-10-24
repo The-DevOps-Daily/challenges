@@ -36,8 +36,8 @@ You control your PR, so the grader never trusts it:
 
 - The tests, the grader and the workflow come from `main`. The Grade workflow copies only the challenge's solution files out of your PR, through the GitHub API, into a fresh copy of the challenge from `main`. Your branch is never checked out.
 - Your code runs only in containers or a throwaway kind cluster. A script runs in a container with no network, an unprivileged user and read-only files. A Dockerfile builds with a pinned official frontend. Kubernetes manifests are checked before anything is applied, and the namespace enforces Pod Security "restricted".
-- The Grade workflow has a read-only token and no secrets. It only uploads a small result file. The Report workflow runs from `main`, reads that file as data, checks it against your PR's real head commit and changed files, and only then comments, labels and closes.
-- Some inputs are random at grading time (generated logs, random text for the app), so an answer cannot be hardcoded.
+- The Grade workflow has a read-only token and no secrets. It only uploads a small result file. The Report workflow runs from `main`, reads that file as data, checks it against the files your PR's head commit changes, and only then comments, labels and closes.
+- Some inputs are random at grading time (generated logs, random text for the app), so the checks do not compare against fixed answers you could copy.
 
 Found a way around it? Report it privately under **Security > Report a vulnerability** instead of opening a PR.
 

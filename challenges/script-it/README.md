@@ -108,7 +108,7 @@ Read the line with one regular expression match instead of cutting fields by pos
 <details>
 <summary>Hint 2: speed</summary>
 
-A `while read` loop in bash over 100,000 lines takes far longer than 10 seconds, and starting `cut` or `grep` once per line is slower still. Let one `awk` program do the reading and counting, and `sort` do the ranking.
+A `while read` loop that does the work in bash is much slower than `awk` on 100,000 lines, and starting `cut` or `grep` once per line is slower still. Let one `awk` program do the reading and counting, and `sort` do the ranking.
 </details>
 
 <details>

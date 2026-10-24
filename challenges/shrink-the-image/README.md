@@ -7,7 +7,7 @@ Docker · Starter · about 30 minutes
 The slug service is tiny: one Flask file (`app.py`) and three dependencies. It turns any text into a URL-friendly slug:
 
 ```console
-$ curl 'localhost:8000/slugify?text=Hello World'
+$ curl 'localhost:8000/slugify?text=Hello%20World'
 {"slug":"hello-world","text":"Hello World"}
 ```
 
@@ -76,7 +76,7 @@ docker image ls shrink-the-image                      # SIZE is what the size ch
 docker image inspect -f '{{.Config.User}}' shrink-the-image
 docker run --rm -d --name shrink -p 8000:8000 shrink-the-image
 curl -i localhost:8000/health
-curl 'localhost:8000/slugify?text=Shrink This Image'
+curl --get --data-urlencode 'text=Shrink This Image' localhost:8000/slugify
 docker top shrink -eo uid,cmd                         # no line should show UID 0
 docker rm -f shrink
 ```
