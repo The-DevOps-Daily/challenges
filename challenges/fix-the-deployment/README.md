@@ -26,7 +26,7 @@ Fix the files in `k8s/` so that:
 
 Keep these as they are:
 
-- the image `devops-daily/inventory-api:1.0`, one container per pod and 2 replicas,
+- the image `devops-daily/inventory-api:1.0` with its own entrypoint (no `command`, `args` or volumes), one container per pod and 2 replicas,
 - a readiness probe and a liveness probe, both HTTP (`httpGet`) probes with delays and periods of at most 60 seconds (fix them, do not delete them),
 - `STORE_NAME` set from a ConfigMap, and the store name `riverside`,
 - the `securityContext` settings (non-root, no privilege escalation, all capabilities dropped, the RuntimeDefault seccomp profile): the grader's namespace enforces Pod Security "restricted",

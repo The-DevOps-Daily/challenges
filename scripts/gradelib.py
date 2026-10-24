@@ -152,6 +152,11 @@ def evaluate_scope(changes: list[FileChange], challenges: dict[str, Challenge]) 
     return Scope("graded", challenge=touched.pop())
 
 
+def console(text: str) -> str:
+    """Text for the job log: breaks up "::" so the runner never reads a workflow command."""
+    return str(text).replace("::", ": :")
+
+
 def sanitize_detail(text: str) -> str:
     """Reduce a check detail to plain text that cannot ping, link or format."""
     text = " ".join(str(text).split())

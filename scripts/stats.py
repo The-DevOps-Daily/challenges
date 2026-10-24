@@ -10,7 +10,8 @@ for that challenge. It writes two files to the stats branch:
 - passes.json: one entry per user and challenge (login, user id, PR, graded
   commit, run, time), for badges later.
 
-PRs with the "not-counted" label (test runs, abuse) are left out.
+PRs with the "not-counted" label (test runs, abuse) are left out; adding that
+label is also how a maintainer withdraws a pass.
 """
 
 from __future__ import annotations
@@ -28,6 +29,9 @@ BRANCH = "stats"
 EXCLUDE = "not-counted"
 BOT_LOGIN = "github-actions[bot]"
 RECORD_RE = re.compile(r"<!-- challenges-result (\{.*?\}) -->")
+# Bump when the rules for counting a pass change; older cached entries are
+# checked again against the PR's pass record.
+POLICY = 1
 
 
 def read_branch_json(gh: GitHub, path: str) -> dict:
@@ -103,7 +107,7 @@ def main() -> int:
         if cid not in challenges:
             continue
         entry = known.get((cid, issue["number"]))
-        if entry is None or entry.get("user_id") != int(user["id"]):
+        if entry is None or entry.get("user_id") != int(user["id"]) or entry.get("policy") != POLICY:
             record = find_record(gh, issue["number"], cid)
             if record is None:
                 print(f"PR #{issue['number']}: no pass record from the Report workflow; not counted")
@@ -116,6 +120,7 @@ def main() -> int:
                 "sha": record.get("sha"),
                 "run_id": record.get("run_id"),
                 "passed_at": issue.get("closed_at") or issue.get("updated_at"),
+                "policy": POLICY,
             }
         key = (cid, int(user["id"]))
         if key not in passes or entry["passed_at"] < passes[key]["passed_at"]:

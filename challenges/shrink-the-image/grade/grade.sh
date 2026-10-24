@@ -38,15 +38,29 @@ fi
 # author's choice. The build pins the frontend anyway (FRONTEND above); this
 # check gives a clear message first. BuildKit skips a UTF-8 byte order mark,
 # so strip one before looking, and look at every line, in # and // forms.
-if [[ $(tr -d '\000' < "$dockerfile" | wc -c) -ne $(wc -c < "$dockerfile") ]]; then
+preflight=$(python3 -I - "$dockerfile" <<'PY'
+import re, sys
+data = open(sys.argv[1], "rb").read()
+if b"\0" in data:
+    print("nul")
+    sys.exit()
+if data.startswith(b"\xef\xbb\xbf"):
+    data = data[3:]
+directive = re.compile(rb"^[ \t]*(#|//)[ \t]*syntax[ \t]*=", re.IGNORECASE)
+if any(directive.match(line) for line in data.splitlines()):
+    print("syntax")
+PY
+)
+if [[ $preflight == nul ]]; then
   record build fail "The Dockerfile contains NUL bytes; it must be a text file."
   skip "Skipped: the image did not build." size non-root starts works
   exit 0
-fi
-if sed '1s/^\xEF\xBB\xBF//' "$dockerfile" | grep -Eiq '^[[:space:]]*(#|//)[[:space:]]*syntax[[:space:]]*='; then
+elif [[ $preflight == syntax ]]; then
   record build fail "The Dockerfile has a syntax directive (a comment line with syntax=). Remove it: the grader always builds with Docker's own Dockerfile frontend."
   skip "Skipped: the image did not build." size non-root starts works
   exit 0
+elif [[ -n $preflight ]]; then
+  exit 1
 fi
 
 build_log="$GRADE_OUT/build.log"
@@ -140,43 +154,19 @@ case ${config_user%%:*} in
 esac
 
 # --- works ----------------------------------------------------------------------
-# Random accented and non-Latin words: the right slugs need python-slugify's
-# transliteration, so a hand-written stand-in for the app does not pass.
-words=(
-  "Crème|creme" "Brûlée|brulee" "Straße|strasse" "Ærøskøbing|aeroskobing" "Łódź|lodz"
-  "naïve|naive" "café|cafe" "Dvořák|dvorak" "São|sao" "Zürich|zurich" "Kraków|krakow"
-  "Málaga|malaga" "Øresund|oresund" "Smörgåsbord|smorgasbord" "piñata|pinata"
-  "jalapeño|jalapeno" "façade|facade" "Göteborg|goteborg" "Reykjavík|reykjavik"
-  "Ελλάδα|ellada" "Москва|moskva" "Déjà|deja" "Œuvre|oeuvre" "Fjörður|fjordur"
-  "Ångström|angstrom" "Señor|senor" "Über|uber"
-)
-separators=(" " ", " " - " "! " "   " " / ")
+# check_app.py sends random Latin, Greek and Cyrillic texts and compares the
+# slugs with python-slugify itself, then checks Flask's error answers and the
+# gunicorn Server header. It runs in a venv with pinned, hashed packages.
 if [[ $started == true ]]; then
-  problems=()
-  for round in 1 2 3; do
-    text="" want=""
-    for _ in 1 2 3 4; do
-      pick=${words[RANDOM % ${#words[@]}]}
-      text+="${pick%%|*}${separators[RANDOM % ${#separators[@]}]}"
-      want+="${pick##*|}-"
-    done
-    number=$((RANDOM % 9000 + 1000))
-    text+="$number"
-    want+="$number"
-    body=$(curl -s --max-time 5 -G --data-urlencode "text=$text" "http://127.0.0.1:$PORT/slugify" || true)
-    got=$(python3 -c 'import json,sys; print(json.loads(sys.argv[1]).get("slug",""))' "$body" 2>/dev/null || true)
-    [[ $got == "$want" ]] || problems+=("round $round")
-  done
-  missing=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "http://127.0.0.1:$PORT/slugify" || true)
-  server=$(curl -s -o /dev/null -D - --max-time 5 "http://127.0.0.1:$PORT/health" | tr -d '\r' | awk -F': ' 'tolower($1) == "server" { print tolower($2) }')
-  if ((${#problems[@]} > 0)); then
-    record works fail "GET /slugify returned the wrong slug for ${#problems[@]} of 3 random texts."
-  elif [[ $missing != 400 ]]; then
-    record works fail "GET /slugify without text answered $missing, not 400."
-  elif [[ $server != gunicorn* ]]; then
-    record works fail "The app is not served by gunicorn, as in the starter's CMD."
+  if [[ ! -x $GRADE_TOOLS/venv/bin/python ]]; then
+    python3 -m venv "$GRADE_TOOLS/venv" || exit 1
+    "$GRADE_TOOLS/venv/bin/pip" install --quiet --disable-pip-version-check --no-deps --require-hashes \
+      -r "$GRADE_DIR/requirements-grader.txt" || exit 1
+  fi
+  if works_detail=$("$GRADE_TOOLS/venv/bin/python" "$GRADE_DIR/check_app.py" "$PORT"); then
+    record works pass "$works_detail"
   else
-    record works pass "GET /slugify returned the right slugs for 3 random texts, served by gunicorn."
+    record works fail "$works_detail"
   fi
 else
   record works skip "Skipped: the app did not start."

@@ -13,7 +13,7 @@ import os
 import sys
 from pathlib import Path
 
-from gradelib import CHECK_STATUSES, load_challenges, sanitize_detail
+from gradelib import CHECK_STATUSES, console, load_challenges, sanitize_detail
 
 SCHEMA = 1
 
@@ -78,14 +78,14 @@ def main() -> int:
 
     if "--exit-code" in sys.argv[1:]:
         result = json.loads(result_file.read_text(encoding="utf-8"))
-        print(f"Result: {result['status']}")
+        print(console(f"Result: {result['status']}"))
         for check in result["checks"]:
-            print(f"  {check['status']:4}  {check['id']}  {check['detail']}")
+            print(console(f"  {check['status']:4}  {check['id']}  {check['detail']}"))
         return 0 if result["status"] in ("passed", "not_graded") else 1
 
     result = build(out_dir)
     result_file.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
-    print(json.dumps(result, indent=2))
+    print(console(json.dumps(result, indent=2)))
     return 0
 
 

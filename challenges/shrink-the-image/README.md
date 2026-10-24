@@ -37,7 +37,7 @@ Leave `app.py`, `requirements.txt`, `requirements-dev.txt` and `tests/` as they 
 | Under 200 MB | The image is at most 200 MB (200,000,000 bytes), as `docker image inspect` reports it. |
 | Runs as a non-root user | The image sets a `USER` that is not root, and no process in the running container has UID 0. |
 | Starts and answers /health | The container, started with no extra arguments, answers `GET /health` on port 8000 with HTTP 200 within 20 seconds. |
-| The app still works | `GET /slugify` returns the right slug for three random texts with accented and non-Latin words (`Crème Brûlée, Москва` gives `creme-brulee-moskva`), answers 400 without text, and the responses come from gunicorn. |
+| The app still works | `GET /slugify` returns the same slug as python-slugify for five random texts in Latin, Greek and Cyrillic letters (`Crème Brûlée, Москва` gives `creme-brulee-moskva`), Flask's error answers are unchanged, and gunicorn serves the app. |
 
 ## Files you may change
 

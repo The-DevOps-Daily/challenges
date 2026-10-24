@@ -19,6 +19,7 @@ from gradelib import (
     MAX_FILE_BYTES,
     SHA_RE,
     GitHub,
+    console,
     Scope,
     evaluate_scope,
     load_challenges,
@@ -72,7 +73,7 @@ def main() -> int:
         write_scope(out_dir, scope, head_sha)
         print(f"Not grading: {scope.kind} ({scope.reason or 'no solution files'})")
         for path in scope.paths:
-            print(f"  {path}")
+            print(console(f"  {path!r}"))
         return 0
 
     cid = scope.challenge
@@ -120,7 +121,7 @@ def main() -> int:
             raise SystemExit(f"refusing to overwrite {quote_path(rel)}")
         dest.write_bytes(blob)
         dest.chmod(0o644)
-        print(f"Using {change.path} from the PR ({len(blob)} bytes)")
+        print(console(f"Using {change.path!r} from the PR ({len(blob)} bytes)"))
 
     write_scope(out_dir, scope, head_sha)
     if scope.kind != "graded":

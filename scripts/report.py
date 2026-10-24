@@ -49,6 +49,7 @@ RESULT_KEYS = {"schema", "challenge", "head_sha", "status", "reason", "checks", 
 ARTIFACT_STATUSES = {"passed", "failed", "rejected", "not_graded", "error"}
 LABEL_PASSED = "passed"
 CHALLENGE_LABEL = "challenge:"
+ALREADY_MARKER = "<!-- challenges-grader already-passed -->"
 
 
 class BadResult(Exception):
@@ -215,7 +216,13 @@ def comment_body(kind: str, challenge: Challenge | None, head_sha: str, run_url:
 def upsert_comment(gh: GitHub, number: int, head_sha: str, body: str, once_marker: str | None = None) -> None:
     comments = gh.paginate(f"/repos/{gh.repo}/issues/{number}/comments", limit=500)
     look_for = once_marker or marker(head_sha)
-    mine = [c for c in comments if c["user"]["login"] == BOT_LOGIN and look_for in (c.get("body") or "")]
+    mine = [
+        c
+        for c in comments
+        if c["user"]["login"] == BOT_LOGIN
+        and look_for in (c.get("body") or "")
+        and (once_marker == ALREADY_MARKER or ALREADY_MARKER not in (c.get("body") or ""))
+    ]
     if mine:
         gh.request("PATCH", f"/repos/{gh.repo}/issues/comments/{mine[-1]['id']}", body={"body": body})
     else:
@@ -251,9 +258,11 @@ def main() -> int:
     challenges = load_challenges()
     pr_labels = {label["name"] for label in pr.get("labels", [])}
     if LABEL_PASSED in pr_labels:
-        body = comment_body("already_passed", None, head_sha, run_url)
+        # Its own marker, so the notice never replaces the pass comment and
+        # its pass record.
+        body = comment_body("already_passed", None, head_sha, run_url).replace(marker(head_sha), ALREADY_MARKER)
         if still_current(gh, number, head_sha):
-            upsert_comment(gh, number, head_sha, body)
+            upsert_comment(gh, number, head_sha, body, once_marker=ALREADY_MARKER)
             gh.request("PATCH", f"/repos/{gh.repo}/pulls/{number}", body={"state": "closed"})
         print("Already passed; closed without grading.")
         return 0

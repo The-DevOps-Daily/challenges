@@ -30,7 +30,7 @@
     {
       "id": "works",
       "name": "The app still works",
-      "description": "The real app answers: GET /slugify returns the right slug for three random texts with accented and non-Latin words, answers 400 without text, and gunicorn serves it."
+      "description": "The real app answers: GET /slugify returns the same slug as python-slugify for five random texts in Latin, Greek and Cyrillic letters, Flask's error answers are unchanged, and gunicorn serves it."
     }
   ]
 }

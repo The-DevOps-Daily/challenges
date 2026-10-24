@@ -176,7 +176,7 @@ class ManifestTests(unittest.TestCase):
         bad["spec"]["template"]["spec"]["hostPID"] = True
         bad["spec"]["template"]["spec"]["volumes"] = [{"name": "root", "hostPath": {"path": "/"}}]
         problems = " ".join(check_manifests.check([bad, SERVICE]))
-        for word in ("privileged", "hostPID", "volume type"):
+        for word in ("privileged", "hostPID", "volumes"):
             self.assertIn(word, problems)
 
     def test_other_kinds_and_images_are_refused(self):
@@ -211,6 +211,12 @@ class ManifestTests(unittest.TestCase):
         for port in (0, 70000, "nope", True):
             probe = {"httpGet": {"path": "/healthz", "port": port}}
             self.assertTrue(check_manifests.check([deployment(livenessProbe=probe), SERVICE]), port)
+
+    def test_app_cannot_be_replaced(self):
+        self.assertTrue(check_manifests.check([deployment(command=["/bin/sh"]), SERVICE]))
+        self.assertTrue(check_manifests.check([deployment(volumeMounts=[{"name": "b", "mountPath": "/inventory-api"}]), SERVICE]))
+        cm = {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "b"}, "binaryData": {"server": "AAAA"}}
+        self.assertTrue(check_manifests.check([deployment(), SERVICE, cm]))
 
     def test_root_and_restricted_rules(self):
         self.assertTrue(check_manifests.check([deployment(securityContext={"runAsUser": 0}), SERVICE]))

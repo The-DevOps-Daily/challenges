@@ -23,8 +23,6 @@ PROBE_PATH_RE = re.compile(r"^/[A-Za-z0-9._~/%-]{0,200}$")
 PORT_NAME_RE = re.compile(r"^[a-z0-9]([-a-z0-9]{0,13}[a-z0-9])?$")
 NAMESPACE = "challenge"
 ALLOWED = {("apps/v1", "Deployment"), ("v1", "Service"), ("v1", "ConfigMap")}
-SAFE_VOLUMES = {"configMap", "emptyDir", "downwardAPI", "projected"}
-SAFE_PROJECTIONS = {"configMap", "downwardAPI"}
 
 
 def read_documents(text: str) -> list[dict]:
@@ -126,13 +124,10 @@ def check_pod_spec(spec: dict, annotations: dict, problems: list[str]) -> None:
             problems.append(f"The pod template sets {key}. Pods must not share the node's namespaces.")
     if spec.get("initContainers") or spec.get("ephemeralContainers"):
         problems.append("The pod template adds init or ephemeral containers. Keep the single api container.")
-    for volume in spec.get("volumes") or []:
-        kinds = set(volume) - {"name"}
-        if not kinds <= SAFE_VOLUMES:
-            problems.append("The pod template mounts a volume type other than configMap, emptyDir, downwardAPI or projected.")
-        for source in (volume.get("projected") or {}).get("sources") or []:
-            if not set(source) <= SAFE_PROJECTIONS:
-                problems.append("A projected volume uses a source other than configMap or downwardAPI.")
+    # The app needs no files: no volumes means nothing can be mounted over
+    # the binary or added next to it.
+    if spec.get("volumes"):
+        problems.append("The pod template defines volumes. The app needs none; keep the pod without volumes.")
     pod_sc = spec.get("securityContext") or {}
     if pod_sc.get("sysctls"):
         problems.append("The pod template sets sysctls.")
@@ -147,6 +142,9 @@ def check_pod_spec(spec: dict, annotations: dict, problems: list[str]) -> None:
         check_security_context(pod_sc, container, annotations, problems)
         if container.get("image") != IMAGE:
             problems.append(f"The container image must stay {IMAGE}.")
+        for field in ("command", "args", "volumeMounts", "volumeDevices", "lifecycle", "workingDir"):
+            if container.get(field):
+                problems.append(f"The container sets {field}. Keep the image's own entrypoint and files.")
         sc = container.get("securityContext") or {}
         if sc.get("privileged"):
             problems.append("The container is privileged.")
@@ -184,6 +182,8 @@ def check(items: list) -> list[str]:
         if (api, kind) not in ALLOWED:
             problems.append(f"Only Deployment, Service and ConfigMap objects are allowed, found {kind} {name}.")
             continue
+        if kind == "ConfigMap" and obj.get("binaryData"):
+            problems.append(f"ConfigMap {name} has binaryData. Configuration here is plain text.")
         if meta.get("namespace") not in (None, "", NAMESPACE):
             problems.append(f"{kind} {name} sets a namespace. Leave the namespace out; the grader picks it.")
         if kind == "Deployment":
