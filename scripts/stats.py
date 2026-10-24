@@ -44,7 +44,7 @@ def read_branch_json(gh: GitHub, path: str) -> dict:
 
 def find_record(gh: GitHub, number: int, cid: str) -> dict | None:
     """The Report workflow's pass record for this challenge on this PR."""
-    for comment in gh.paginate(f"/repos/{gh.repo}/issues/{number}/comments", limit=500):
+    for comment in gh.paginate(f"/repos/{gh.repo}/issues/{number}/comments", limit=100000):
         if comment["user"]["login"] != BOT_LOGIN:
             continue
         match = RECORD_RE.search(comment.get("body") or "")
@@ -84,7 +84,10 @@ def put_file(gh: GitHub, path: str, content: str) -> None:
 def main() -> int:
     gh = GitHub()
     challenges = load_challenges()
-    issues = gh.paginate(f"/repos/{gh.repo}/issues?state=all&labels=passed", limit=10000)
+    limit = 50000
+    issues = gh.paginate(f"/repos/{gh.repo}/issues?state=all&labels=passed", limit=limit)
+    if len(issues) >= limit:
+        raise SystemExit("too many labeled PRs to count in one run; not publishing partial stats")
 
     old_passes = read_branch_json(gh, "passes.json")
     known = {(e["challenge"], e["pr"]): e for e in old_passes.get("passes", []) if isinstance(e, dict)}

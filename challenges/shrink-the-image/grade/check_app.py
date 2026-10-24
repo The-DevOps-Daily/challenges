@@ -1,10 +1,12 @@
 """Check that the running container serves the real slug app.
 
-  check_app.py PORT
+  check_app.py BASE_URL
 
 Runs in a venv with the same python-slugify as the app, so the expected
 slugs come from the library itself. The texts are random letters from Latin,
 Greek and Cyrillic alphabets, so the answers cannot be looked up in a table.
+Redirects are never followed, and the whole response is compared with what
+app.py and Flask answer, not only the slug.
 Prints one line for the PR comment and exits 0 when everything matches.
 """
 
@@ -34,10 +36,19 @@ def random_text() -> str:
     return "".join(words)
 
 
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+OPENER = urllib.request.build_opener(NoRedirect)
+MISSING_TEXT = {"error": "pass the text to turn into a slug as ?text="}
+
+
 def request(url: str, method: str = "GET"):
     req = urllib.request.Request(url, method=method)
     try:
-        with urllib.request.urlopen(req, timeout=5) as resp:
+        with OPENER.open(req, timeout=5) as resp:
             return resp.status, dict(resp.headers), resp.read(65536)
     except urllib.error.HTTPError as exc:
         return exc.code, dict(exc.headers), exc.read(65536)
@@ -45,26 +56,39 @@ def request(url: str, method: str = "GET"):
         return 0, {}, b""
 
 
+def json_body(headers: dict, body: bytes):
+    if not headers.get("Content-Type", "").startswith("application/json"):
+        return None
+    try:
+        return json.loads(body)
+    except ValueError:
+        return None
+
+
 def main() -> int:
-    base = f"http://127.0.0.1:{int(sys.argv[1])}"
+    base = sys.argv[1].rstrip("/")
     wrong = 0
     rounds = 5
     for _ in range(rounds):
         text = random_text()
-        status, _, body = request(f"{base}/slugify?{urllib.parse.urlencode({'text': text})}")
-        try:
-            got = json.loads(body).get("slug") if status == 200 else None
-        except ValueError:
-            got = None
-        if got != slugify(text):
+        status, headers, body = request(f"{base}/slugify?{urllib.parse.urlencode({'text': text})}")
+        if status != 200 or json_body(headers, body) != {"slug": slugify(text), "text": text}:
             wrong += 1
     if wrong:
         print(f"GET /slugify returned the wrong slug for {wrong} of {rounds} random texts.")
         return 1
 
-    status, _, _ = request(f"{base}/slugify")
-    if status != 400:
-        print(f"GET /slugify without text answered {status}, not 400.")
+    status, headers, body = request(f"{base}/slugify")
+    if status != 400 or json_body(headers, body) != MISSING_TEXT:
+        print(f"GET /slugify without text did not give app.py's 400 answer (got {status}).")
+        return 1
+    status, headers, body = request(f"{base}/health")
+    if status != 200 or json_body(headers, body) != {"status": "ok"}:
+        print("GET /health did not give app.py's answer.")
+        return 1
+    status, _, body = request(f"{base}/no-such-page")
+    if status != 404 or b"The requested URL was not found on the server." not in body:
+        print("An unknown path did not give Flask's 404 page.")
         return 1
     status, headers, _ = request(f"{base}/health", method="POST")
     allow = {h.strip() for h in headers.get("Allow", "").split(",")}

@@ -15,7 +15,7 @@ IMAGE=challenge/shrink-the-image:graded
 # check below.
 FRONTEND=docker/dockerfile:1.28.0@sha256:bb22d9815c728170f72750f4e5b0d672e06176142e1d602c7e66c050100b7e5b
 NAME=shrink-the-image-app
-PORT=18000
+NETWORK=shrink-the-image-net
 work=$GRADE_WORK
 
 skip() {
@@ -95,9 +95,13 @@ else
 fi
 
 # --- starts ---------------------------------------------------------------------
+# The container runs on an internal network: the runner can reach it, but it
+# cannot reach anything else, so it cannot hand requests to a server
+# elsewhere.
 config_user=$(docker image inspect --format '{{.Config.User}}' "$IMAGE")
+docker network create --internal "$NETWORK" > /dev/null || exit 1
 cid=$(docker run -d --name "$NAME" \
-  -p "127.0.0.1:$PORT:8000" \
+  --network "$NETWORK" \
   --memory 512m --pids-limit 256 --cpus 1 \
   --security-opt no-new-privileges \
   "$IMAGE" 2> "$GRADE_OUT/run.err")
@@ -106,11 +110,14 @@ started=false
 if [[ $run_status -ne 0 ]]; then
   record starts fail "docker run failed: $(head -c 200 "$GRADE_OUT/run.err")"
 else
+  ip=$(docker inspect --format "{{(index .NetworkSettings.Networks \"$NETWORK\").IPAddress}}" "$cid")
+  [[ $ip =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]] || exit 1
+  base="http://$ip:8000"
   code=000
   t0=$(date +%s%N)
   deadline=$(($(date +%s) + START_SECONDS))
   while (($(date +%s) < deadline)); do
-    code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 2 "http://127.0.0.1:$PORT/health" || true)
+    code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 2 "$base/health" || true)
     [[ $code == 200 ]] && break
     [[ $(docker inspect --format '{{.State.Running}}' "$cid") == true ]] || break
     sleep 0.5
@@ -132,26 +139,39 @@ else
 fi
 
 # --- non-root -------------------------------------------------------------------
-case ${config_user%%:*} in
-  "" )
-    record non-root fail "The image has no USER instruction, so it runs as root." ;;
-  root | 0 )
-    record non-root fail "The image sets USER to root." ;;
-  * )
-    if [[ $started == true ]]; then
-      uids=$(docker top "$cid" -eo pid,uid 2>/dev/null | awk 'NR > 1 && $2 ~ /^[0-9]+$/ { print $2 }' | sort -un | paste -sd, -)
-      if [[ -z $uids ]]; then
-        record non-root fail "Could not read the processes in the container."
-      elif [[ ,$uids, == *,0,* ]]; then
-        record non-root fail "USER is set, but a process in the container runs as UID 0."
-      else
-        record non-root pass "Processes run as UID $uids."
-      fi
-    else
-      record non-root fail "USER is set, but the container did not start, so its processes could not be checked."
-    fi
-    ;;
-esac
+# USER can name a user whose UID is 0, and a root entrypoint can drop to
+# another user before the grader looks at the processes. So resolve USER to
+# a UID from the image's own /etc/passwd first, then check the processes too.
+user=${config_user%%:*}
+uid=""
+if [[ $user =~ ^[0-9]+$ ]]; then
+  uid=$user
+elif [[ -n $user ]]; then
+  tmp=$(docker create --entrypoint "" "$IMAGE" placeholder 2>/dev/null) &&
+    docker cp -L "$tmp:/etc/passwd" "$GRADE_OUT/passwd" > /dev/null 2>&1
+  [[ -n ${tmp:-} ]] && docker rm -f "$tmp" > /dev/null 2>&1
+  if [[ -f $GRADE_OUT/passwd && $(wc -c < "$GRADE_OUT/passwd") -lt 1000000 ]]; then
+    uid=$(awk -F: -v u="$user" '$1 == u { print $3; exit }' "$GRADE_OUT/passwd")
+  fi
+fi
+if [[ -z $user ]]; then
+  record non-root fail "The image has no USER instruction, so it runs as root."
+elif [[ ! $uid =~ ^[0-9]+$ ]]; then
+  record non-root fail "USER $user is not a UID and is not in the image's /etc/passwd."
+elif ((uid == 0)); then
+  record non-root fail "USER resolves to UID 0, which is root."
+elif [[ $started != true ]]; then
+  record non-root fail "USER is set, but the container did not start, so its processes could not be checked."
+else
+  uids=$(docker top "$cid" -eo pid,uid 2>/dev/null | awk 'NR > 1 && $2 ~ /^[0-9]+$/ { print $2 }' | sort -un | paste -sd, -)
+  if [[ -z $uids ]]; then
+    record non-root fail "Could not read the processes in the container."
+  elif [[ ,$uids, == *,0,* ]]; then
+    record non-root fail "USER is set, but a process in the container runs as UID 0."
+  else
+    record non-root pass "USER resolves to UID $uid, and processes run as UID $uids."
+  fi
+fi
 
 # --- works ----------------------------------------------------------------------
 # check_app.py sends random Latin, Greek and Cyrillic texts and compares the
@@ -163,7 +183,7 @@ if [[ $started == true ]]; then
     "$GRADE_TOOLS/venv/bin/pip" install --quiet --disable-pip-version-check --no-deps --require-hashes \
       -r "$GRADE_DIR/requirements-grader.txt" || exit 1
   fi
-  if works_detail=$("$GRADE_TOOLS/venv/bin/python" "$GRADE_DIR/check_app.py" "$PORT"); then
+  if works_detail=$("$GRADE_TOOLS/venv/bin/python" -I "$GRADE_DIR/check_app.py" "$base"); then
     record works pass "$works_detail"
   else
     record works fail "$works_detail"
@@ -173,3 +193,4 @@ else
 fi
 
 docker rm -f "$NAME" > /dev/null 2>&1 || true
+docker network rm "$NETWORK" > /dev/null 2>&1 || true

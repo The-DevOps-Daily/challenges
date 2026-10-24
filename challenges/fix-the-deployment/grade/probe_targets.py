@@ -48,7 +48,10 @@ def main() -> int:
                 http = (container.get(name) or {}).get("httpGet") or {}
                 port = port_number(http.get("port"), container)
                 path = http.get("path") or "/"
-                if port is None or not isinstance(path, str) or not PATH_RE.match(path):
+                plain = isinstance(path, str) and PATH_RE.match(path) and "//" not in path
+                if plain:
+                    plain = all(part not in (".", "..") for part in path.split("/"))
+                if port is None or not plain:
                     emit(name, "", "", "")
                     continue
                 emit(name, ip, str(port), path)

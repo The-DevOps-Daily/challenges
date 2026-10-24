@@ -27,7 +27,7 @@ Fix the files in `k8s/` so that:
 Keep these as they are:
 
 - the image `devops-daily/inventory-api:1.0` with its own entrypoint (no `command`, `args` or volumes), one container per pod and 2 replicas,
-- a readiness probe and a liveness probe, both HTTP (`httpGet`) probes with delays and periods of at most 60 seconds (fix them, do not delete them),
+- a readiness probe and a liveness probe, both HTTP (`httpGet`) probes on a plain path that answers 2xx without a redirect, with delays and periods of at most 60 seconds (fix them, do not delete them),
 - `STORE_NAME` set from a ConfigMap, and the store name `riverside`,
 - the `securityContext` settings (non-root, no privilege escalation, all capabilities dropped, the RuntimeDefault seccomp profile): the grader's namespace enforces Pod Security "restricted",
 - the Service on port 80, type `ClusterIP`.
@@ -44,7 +44,7 @@ The grader builds the app image from `main`, starts a [kind](https://kind.sigs.k
 | The rollout finishes | `kubectl rollout status deployment/inventory-api` succeeds within 120 seconds, with 2 of 2 replicas ready. |
 | The Service has endpoints | The `inventory-api` Service routes to at least one ready pod. |
 | The Service answers | `GET /` on port 80 of the Service's cluster IP answers HTTP 200 with the store name from the ConfigMap. |
-| The pods stay up | 30 seconds after the other checks, the grader calls the URLs both probes call and they answer, 2 of 2 replicas are still ready, and no container restarted. |
+| The pods stay up | 30 seconds after the other checks, the grader calls the URLs both probes call and they answer 2xx (redirects are not followed), 2 of 2 replicas are still ready, and no container restarted. |
 
 When a check fails, the grader says what it saw (for example, how many pods are ready and in which state), not what to change.
 
@@ -88,7 +88,9 @@ kubectl label namespace challenge pod-security.kubernetes.io/enforce=restricted
 kubectl apply -n challenge -f k8s/
 kubectl -n challenge rollout status deployment/inventory-api --timeout=120s
 
-kubectl -n challenge run curl --rm -it --restart=Never --image=curlimages/curl -- curl -s http://inventory-api/
+kubectl -n challenge port-forward service/inventory-api 8080:80 &
+curl -s localhost:8080/
+kill %1
 
 kind delete cluster --name inventory
 ```

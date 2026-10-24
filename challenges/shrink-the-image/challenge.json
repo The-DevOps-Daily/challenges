@@ -20,7 +20,7 @@
     {
       "id": "non-root",
       "name": "Runs as a non-root user",
-      "description": "The image sets a USER that is not root, and no process in the running container has UID 0."
+      "description": "The image's USER resolves to a UID other than 0 (a name is looked up in the image's /etc/passwd), and no process in the running container has UID 0."
     },
     {
       "id": "starts",
@@ -30,7 +30,7 @@
     {
       "id": "works",
       "name": "The app still works",
-      "description": "The real app answers: GET /slugify returns the same slug as python-slugify for five random texts in Latin, Greek and Cyrillic letters, Flask's error answers are unchanged, and gunicorn serves it."
+      "description": "The real app answers: GET /slugify returns the same answer as app.py for five random texts in Latin, Greek and Cyrillic letters, the error answers are Flask's, and gunicorn serves it, with no network access beyond the grader."
     }
   ]
 }

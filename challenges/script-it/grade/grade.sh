@@ -39,7 +39,7 @@ if [[ ${SANDBOX:-docker} != none ]]; then
 fi
 
 # --- shellcheck ---------------------------------------------------------------
-if grep -Eq '#.*shellcheck[[:space:]].*disable=' "$script"; then
+if grep -Eiq '^[[:space:]]*#[[:space:]]*shellcheck[[:space:]]+(.*[[:space:]])?disable=' "$script"; then
   record shellcheck fail "The script switches ShellCheck checks off with a disable directive. Fix the code instead."
 else
   sc_out=$("$GRADE_TOOLS/shellcheck" --norc --severity=style --format=gcc "$script" 2>&1)

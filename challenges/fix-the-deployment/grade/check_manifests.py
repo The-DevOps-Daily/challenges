@@ -47,6 +47,13 @@ def objects(docs: list) -> list:
     return items
 
 
+def plain_path(path: str) -> bool:
+    """A probe path the grader can call as is: no //, no . or .. segments."""
+    if not PROBE_PATH_RE.match(path) or "//" in path:
+        return False
+    return all(part not in (".", "..") for part in path.split("/"))
+
+
 def container_port_names(container: dict) -> set:
     return {p.get("name") for p in container.get("ports") or [] if p.get("name")}
 
@@ -59,7 +66,7 @@ def check_probe(name: str, probe: dict, container: dict, problems: list[str]) ->
     if http.get("scheme", "HTTP") != "HTTP" or http.get("host") or http.get("httpHeaders"):
         problems.append(f"The {name} must call the pod over plain HTTP, without a host or extra headers.")
     path = http.get("path", "/")
-    if not isinstance(path, str) or not PROBE_PATH_RE.match(path):
+    if not isinstance(path, str) or not plain_path(path):
         problems.append(f"The {name} path must be a plain URL path such as /healthz, with no spaces, quotes, braces or query string.")
     port = http.get("port")
     if isinstance(port, bool) or not (

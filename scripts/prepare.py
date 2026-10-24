@@ -27,6 +27,7 @@ from gradelib import (
 )
 
 REGULAR_MODES = {"100644", "100755"}
+MAX_SOLUTION_FILES = 30
 
 
 def write_scope(out_dir: Path, scope: Scope, head_sha: str) -> None:
@@ -79,35 +80,33 @@ def main() -> int:
     cid = scope.challenge
     assert cid is not None
     challenge = challenges[cid]
-    changes = [c for c in all_changes if challenge.owns(c.path)]
-
     tree = gh.get(f"/repos/{gh.repo}/git/trees/{head_sha}?recursive=1")
     if tree.get("truncated"):
         raise SystemExit("the PR tree is too large to inspect")
-    entries = {e["path"]: e for e in tree["tree"]}
 
+    # The solution files are rebuilt from the head commit's tree, not from
+    # the change list: every allowed path in that tree is written, and every
+    # allowed path from main that the tree no longer has is removed. Renames
+    # and deletions then need no special order.
     copy_challenge(cid, work)
     prefix = f"challenges/{cid}/"
+    wanted = [e for e in tree["tree"] if e["path"].startswith(prefix) and challenge.owns(e["path"])]
+    if len(wanted) > MAX_SOLUTION_FILES:
+        raise SystemExit("too many solution files in the PR tree")
 
-    for change in changes:
-        rel = change.path[len(prefix):]
+    for existing in sorted(work.rglob("*")):
+        rel = existing.relative_to(work).as_posix()
+        if existing.is_file() and challenge.owns(prefix + rel) and prefix + rel not in {e["path"] for e in wanted}:
+            existing.unlink()
+
+    for entry in wanted:
+        rel = entry["path"][len(prefix):]
         dest = work / rel
-        if change.status == "renamed" and change.previous_path:
-            old = work / change.previous_path[len(prefix):]
-            if old.is_file():
-                old.unlink()
-        if change.status == "removed":
-            if dest.is_file():
-                dest.unlink()
-            continue
-        entry = entries.get(change.path)
-        if entry is None:
-            raise SystemExit(f"{change.path} is missing from the PR tree")
         if entry["type"] != "blob" or entry["mode"] not in REGULAR_MODES:
-            scope = Scope("rejected", challenge=cid, reason="not_regular_file", paths=[change.path])
+            scope = Scope("rejected", challenge=cid, reason="not_regular_file", paths=[entry["path"]])
             break
         if int(entry.get("size", 0)) > MAX_FILE_BYTES:
-            scope = Scope("rejected", challenge=cid, reason="file_too_large", paths=[change.path])
+            scope = Scope("rejected", challenge=cid, reason="file_too_large", paths=[entry["path"]])
             break
         blob, _ = gh.request(
             "GET",
@@ -121,7 +120,7 @@ def main() -> int:
             raise SystemExit(f"refusing to overwrite {quote_path(rel)}")
         dest.write_bytes(blob)
         dest.chmod(0o644)
-        print(console(f"Using {change.path!r} from the PR ({len(blob)} bytes)"))
+        print(console(f"Using {entry['path']!r} from the PR ({len(blob)} bytes)"))
 
     write_scope(out_dir, scope, head_sha)
     if scope.kind != "graded":

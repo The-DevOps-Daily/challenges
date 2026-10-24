@@ -138,6 +138,8 @@ fi
 # --- stable ---------------------------------------------------------------------
 # Wait, then call the URLs the probes call (a liveness probe with a long delay
 # could otherwise hide a wrong path), count restarts and check readiness again.
+# A probe must answer 2xx itself: a redirect is not followed and counts as a
+# failure, so a path the app only redirects cannot pass here.
 if [[ $rolled_out == true ]]; then
   sleep 30
   kubectl -n "$NS" get pods -o json > "$out/pods-after.json"
@@ -148,7 +150,7 @@ if [[ $rolled_out == true ]]; then
       continue
     fi
     code=$(docker exec "$NODE" curl --globoff -s -o /dev/null -w '%{http_code}' --max-time 3 "http://$ip:$port$path" 2>/dev/null || true)
-    [[ $code =~ ^[23][0-9][0-9]$ ]] || bad_probes+=("$probe")
+    [[ $code =~ ^2[0-9][0-9]$ ]] || bad_probes+=("$probe")
   done < <(python3 "$GRADE_DIR/probe_targets.py" "$out/pods-after.json")
   restarts=$(python3 -c '
 import json, sys
@@ -158,7 +160,7 @@ print(sum(int(c.get("restartCount") or 0) for p in pods for c in (p.get("status"
   ready_now=$(kubectl -n "$NS" get deployment inventory-api -o jsonpath='{.status.readyReplicas}')
   if ((${#bad_probes[@]} > 0)); then
     names=$(printf '%s\n' "${bad_probes[@]}" | sort -u | paste -sd, - | sed 's/,/, /g')
-    record stable fail "A probe request does not succeed when the grader sends it to a running pod: $names."
+    record stable fail "A probe request does not get a 2xx answer when the grader sends it to a running pod: $names."
   elif [[ ${restarts:-1} != 0 ]]; then
     record stable fail "Containers restarted ${restarts} time(s)."
   elif [[ ${ready_now:-0} != 2 ]]; then
