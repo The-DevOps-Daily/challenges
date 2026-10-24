@@ -24,3 +24,4 @@ ips=$(cat $file | awk '{print $1}' | sort -u | wc -l)
 echo "requests: $total"
 echo "unique_ips: $ips"
 # TODO: status classes, skipped lines, top_ips and top_paths
+# starter, unchanged apart from this line
