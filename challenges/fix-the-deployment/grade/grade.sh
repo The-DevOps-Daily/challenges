@@ -99,12 +99,18 @@ print_untrusted "$out/state.log"
 echo "::endgroup::"
 
 # --- endpoints ------------------------------------------------------------------
-read -r total ready < <(kubectl -n "$NS" get endpointslices -l kubernetes.io/service-name=inventory-api -o json |
-  python3 -c '
+# The EndpointSlice controller can lag the rollout by a moment; when the pods
+# rolled out, give it up to 20 seconds.
+for _ in $(seq 1 10); do
+  read -r total ready < <(kubectl -n "$NS" get endpointslices -l kubernetes.io/service-name=inventory-api -o json |
+    python3 -c '
 import json, sys
 eps = [e for s in json.load(sys.stdin).get("items", []) for e in (s.get("endpoints") or [])]
 print(len(eps), sum(1 for e in eps if (e.get("conditions") or {}).get("ready")))
 ')
+  [[ $rolled_out == true && ${ready:-0} -eq 0 ]] || break
+  sleep 2
+done
 total=${total:-0}
 ready=${ready:-0}
 if ((ready > 0)); then
@@ -120,8 +126,14 @@ cluster_ip=$(kubectl -n "$NS" get service inventory-api -o jsonpath='{.spec.clus
 if [[ -z $cluster_ip || $cluster_ip == None ]]; then
   record answers fail "The Service has no cluster IP."
 else
-  response=$(docker exec "$NODE" curl -s --max-time 5 -w '\n%{http_code}' "http://$cluster_ip:80/" 2>/dev/null)
-  curl_status=$?
+  # kube-proxy takes a few seconds to replace the "no endpoints" reject rule
+  # once pods turn ready, so keep trying for up to 30 seconds.
+  for _ in $(seq 1 15); do
+    response=$(docker exec "$NODE" curl -s --max-time 5 -w '\n%{http_code}' "http://$cluster_ip:80/" 2>/dev/null)
+    curl_status=$?
+    [[ $curl_status -eq 0 && ${response##*$'\n'} != 000 ]] && break
+    sleep 2
+  done
   code=${response##*$'\n'}
   body=${response%$'\n'*}
   if [[ $curl_status -ne 0 || $code == 000 ]]; then
