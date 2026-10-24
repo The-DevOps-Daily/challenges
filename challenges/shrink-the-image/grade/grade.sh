@@ -162,11 +162,13 @@ if [[ -n $user ]]; then
     docker cp "$bb:/bin/busybox" "$trusted/busybox" > /dev/null || exit 1
     docker rm -f "$bb" > /dev/null
   fi
+  # A fresh random directory, so nothing in the image can sit at that path.
+  # The file keeps the name busybox, which busybox needs to run its applets.
   probe="/.grader-$(od -An -N8 -tx1 /dev/urandom | tr -d ' \n')"
   if probe_out=$(timeout 60 docker run --rm --network none --pull never --no-healthcheck \
     --memory 128m --pids-limit 16 \
-    --entrypoint "$probe" \
-    -v "$trusted/busybox:$probe:ro" \
+    --entrypoint "$probe/busybox" \
+    -v "$trusted:$probe:ro" \
     "$IMAGE" id -u 2> "$GRADE_OUT/probe.err"); then
     [[ $probe_out =~ ^[0-9]{1,10}$ ]] && uid=$probe_out
   fi
