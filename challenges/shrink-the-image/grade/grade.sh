@@ -110,11 +110,15 @@ cid=$(docker run -d --name "$NAME" \
   "$IMAGE" 2> "$GRADE_OUT/run.err")
 run_status=$?
 started=false
+ip=""
+if [[ $run_status -eq 0 ]]; then
+  ip=$(docker inspect --format "{{(index .NetworkSettings.Networks \"$NETWORK\").IPAddress}}" "$cid" 2>/dev/null)
+fi
 if [[ $run_status -ne 0 ]]; then
   record starts fail "docker run failed: $(head -c 200 "$GRADE_OUT/run.err")"
+elif [[ ! $ip =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]]; then
+  record starts fail "The container stopped at once (exit code $(docker inspect --format '{{.State.ExitCode}}' "$cid" 2>/dev/null))."
 else
-  ip=$(docker inspect --format "{{(index .NetworkSettings.Networks \"$NETWORK\").IPAddress}}" "$cid")
-  [[ $ip =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]] || exit 1
   base="http://$ip:8000"
   code=000
   t0=$(date +%s%N)
