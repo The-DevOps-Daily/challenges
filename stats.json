@@ -1,0 +1,15 @@
+{
+  "schema": 1,
+  "updated_at": "2026-10-24T00:00:00Z",
+  "challenges": {
+    "fix-the-deployment": {
+      "passed": 0
+    },
+    "script-it": {
+      "passed": 0
+    },
+    "shrink-the-image": {
+      "passed": 0
+    }
+  }
+}
