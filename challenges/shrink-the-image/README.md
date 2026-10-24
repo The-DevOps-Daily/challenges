@@ -21,23 +21,23 @@ Rewrite `Dockerfile`, and add a `.dockerignore` if it helps, so that the image:
 - is at most 200 MB,
 - runs as a user that is not root,
 - starts and answers `GET /health` on port 8000 within 20 seconds,
-- still runs the real app.
+- still runs the real app with gunicorn, as the current `CMD` does.
 
 Leave `app.py`, `requirements.txt`, `requirements-dev.txt` and `tests/` as they are. The grader uses the copies from `main` in any case.
 
 ### Why 200 MB
 
-`python:3.13-slim` plus the three runtime dependencies comes out at about 150 MB. The full `python:3.13` base image alone is over 1 GB, and compilers and dev tools add hundreds of MB on top. A limit of 200 MB leaves room for any reasonable slim image, and rules out the full base image and images that keep build tools or dev dependencies. Alpine and distroless images can get much smaller, but you do not need them to pass.
+`python:3.13-slim` plus the three runtime dependencies comes out at about 125 MB. The full `python:3.13` base image alone is over 1 GB, and compilers and dev tools add hundreds of MB on top. A limit of 200 MB leaves room for any reasonable slim image, and rules out the full base image and images that keep build tools or dev dependencies. Alpine and distroless images can get much smaller, but you do not need them to pass.
 
 ## What the grader checks
 
 | Check | Passes when |
 | --- | --- |
-| The image builds | `docker build` finishes within 10 minutes on a GitHub-hosted `ubuntu-24.04` runner. A `# syntax=` line may only name `docker/dockerfile`. |
+| The image builds | `docker build` finishes within 10 minutes on a GitHub-hosted `ubuntu-24.04` runner, with the Dockerfile frontend that ships with Docker. A `# syntax=` line is not allowed. |
 | Under 200 MB | The image is at most 200 MB (200,000,000 bytes), as `docker image inspect` reports it. |
 | Runs as a non-root user | The image sets a `USER` that is not root, and no process in the running container has UID 0. |
 | Starts and answers /health | The container, started with no extra arguments, answers `GET /health` on port 8000 with HTTP 200 within 20 seconds. |
-| The app still works | `GET /slugify?text=...` returns the right slug for a random text. |
+| The app still works | `GET /slugify` returns the right slug for three random texts with accented and non-Latin words (`Crème Brûlée, Москва` gives `creme-brulee-moskva`), answers 400 without text, and the responses come from gunicorn. |
 
 ## Files you may change
 

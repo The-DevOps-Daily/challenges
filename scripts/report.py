@@ -5,9 +5,14 @@ write to pull requests. Rules:
 
 - The PR, its head SHA and its changed files come from the workflow_run event
   and the GitHub API. The artifact cannot pick the PR.
-- The PR's changed files decide the challenge. If they are outside one
-  challenge's solution files, the PR could have changed the grader or the
-  workflow, so the artifact is ignored.
+- The files the graded commit changes (compared with main, by SHA, not the
+  PR's live file list) decide the challenge. If they are outside one
+  challenge's solution files, the commit could have changed the grader or
+  the workflow, so the artifact is ignored.
+- The artifact must come from this exact run attempt, and a pass needs the
+  run itself to have succeeded.
+- A PR that already passed is not graded again, and it keeps exactly one
+  challenge label, so labels cannot pile up across challenges.
 - The artifact is data. It is size-limited, schema-checked, and only its
   per-check pass, fail or skip values and short, sanitized details are used.
   Check names and messages come from main.
@@ -36,13 +41,14 @@ from gradelib import (
 )
 
 GRADE_WORKFLOW = ".github/workflows/grade.yml"
-ARTIFACT_NAME = "grade-result"
+ARTIFACT_PREFIX = "grade-result-"
 MAX_ARTIFACT_BYTES = 64 * 1024
 BOT_LOGIN = "github-actions[bot]"
 SITE = "https://devops-daily.com/challenges"
 RESULT_KEYS = {"schema", "challenge", "head_sha", "status", "reason", "checks", "graded_at"}
 ARTIFACT_STATUSES = {"passed", "failed", "rejected", "not_graded", "error"}
 LABEL_PASSED = "passed"
+CHALLENGE_LABEL = "challenge:"
 
 
 class BadResult(Exception):
@@ -57,6 +63,12 @@ def marker(head_sha: str) -> str:
     return f"<!-- challenges-grader sha={head_sha} -->"
 
 
+def pass_record(challenge: Challenge, head_sha: str, run_id: int, run_attempt: int) -> str:
+    """A machine-readable pass record, read by stats.py (and later badges)."""
+    record = {"challenge": challenge.id, "status": "passed", "sha": head_sha, "run_id": run_id, "run_attempt": run_attempt}
+    return f"<!-- challenges-result {json.dumps(record, sort_keys=True)} -->"
+
+
 def find_pr(gh: GitHub, head_owner: str, head_branch: str, head_sha: str) -> dict | None:
     query = urllib.parse.urlencode({"state": "open", "head": f"{head_owner}:{head_branch}", "base": "main"})
     for pr in gh.get(f"/repos/{gh.repo}/pulls?{query}") or []:
@@ -69,12 +81,13 @@ def find_pr(gh: GitHub, head_owner: str, head_branch: str, head_sha: str) -> dic
     return None
 
 
-def load_artifact(gh: GitHub, run_id: int) -> dict | None:
-    listing = gh.get(f"/repos/{gh.repo}/actions/runs/{run_id}/artifacts?name={ARTIFACT_NAME}&per_page=20")
-    artifacts = [a for a in listing.get("artifacts", []) if a["name"] == ARTIFACT_NAME and not a["expired"]]
-    if not artifacts:
+def load_artifact(gh: GitHub, run_id: int, run_attempt: int) -> dict | None:
+    name = f"{ARTIFACT_PREFIX}{run_attempt}"
+    listing = gh.get(f"/repos/{gh.repo}/actions/runs/{run_id}/artifacts?name={name}&per_page=20")
+    artifacts = [a for a in listing.get("artifacts", []) if a["name"] == name and not a["expired"]]
+    if len(artifacts) != 1:
         return None
-    artifact = max(artifacts, key=lambda a: a["id"])
+    artifact = artifacts[0]
     if artifact["size_in_bytes"] > MAX_ARTIFACT_BYTES:
         raise BadResult("artifact too large")
     blob, _ = gh.request("GET", artifact["archive_download_url"], raw=True, max_bytes=4 * MAX_ARTIFACT_BYTES)
@@ -143,6 +156,7 @@ def comment_body(kind: str, challenge: Challenge | None, head_sha: str, run_url:
     lines = [marker(head_sha)]
     if kind == "passed":
         lines += [
+            kw["record"],
             f"### {title}: passed",
             "",
             checks_table(challenge, kw["checks"]),
@@ -171,6 +185,12 @@ def comment_body(kind: str, challenge: Challenge | None, head_sha: str, run_url:
             allowed = ", ".join(f"`challenges/{challenge.id}/{p}`" for p in challenge.solution_paths)
             lines += ["", f"A submission for this challenge may only change: {allowed}."]
         lines += ["", "Change the PR so it only touches those files, push again, and the grader runs again."]
+    elif kind == "already_passed":
+        lines += [
+            f"### {title}: already passed",
+            "",
+            "This PR passed before, so it is not graded again. Open a new PR to try this or another challenge.",
+        ]
     elif kind == "not_graded":
         lines += [
             "### Not a challenge submission",
@@ -215,7 +235,8 @@ def main() -> int:
         print("Unexpected head SHA; nothing to do.")
         return 0
     run_id = int(env["RUN_ID"])
-    run_url = f"https://github.com/{gh.repo}/actions/runs/{run_id}"
+    run_attempt = int(env["RUN_ATTEMPT"])
+    run_url = f"https://github.com/{gh.repo}/actions/runs/{run_id}/attempts/{run_attempt}"
 
     pr = find_pr(gh, env["HEAD_OWNER"], env["HEAD_BRANCH"], head_sha)
     if pr is None:
@@ -225,7 +246,16 @@ def main() -> int:
     print(f"PR #{number} by {pr['user']['login']} at {head_sha}")
 
     challenges = load_challenges()
-    scope = evaluate_scope(gh.pr_changes(number), challenges)
+    pr_labels = {label["name"] for label in pr.get("labels", [])}
+    if LABEL_PASSED in pr_labels:
+        body = comment_body("already_passed", None, head_sha, run_url)
+        if still_current(gh, number, head_sha):
+            upsert_comment(gh, number, head_sha, body)
+            gh.request("PATCH", f"/repos/{gh.repo}/pulls/{number}", body={"state": "closed"})
+        print("Already passed; closed without grading.")
+        return 0
+
+    scope = evaluate_scope(gh.commit_changes(head_sha), challenges)
     challenge = challenges.get(scope.challenge) if scope.challenge else None
     labels: list[str] = []
     close = False
@@ -249,16 +279,21 @@ def main() -> int:
         assert challenge is not None
         labels.append(f"challenge:{challenge.id}")
         try:
-            raw = load_artifact(gh, run_id)
+            raw = load_artifact(gh, run_id, run_attempt)
             if raw is None:
-                raise BadResult("no artifact")
+                raise BadResult("no artifact for this run attempt")
             trusted = validate(raw, challenge, head_sha)
+            if trusted["status"] == "passed" and env.get("RUN_CONCLUSION") != "success":
+                raise BadResult("a pass needs a successful grade run")
         except (BadResult, ValueError, KeyError, zipfile.BadZipFile, urllib.error.HTTPError) as exc:
             print(f"Unusable result: {exc}")
             trusted = {"status": "error"}
         verdict = trusted["status"]
         if verdict in ("passed", "failed"):
-            body = comment_body(verdict, challenge, head_sha, run_url, checks=trusted["checks"])
+            body = comment_body(
+                verdict, challenge, head_sha, run_url, checks=trusted["checks"],
+                record=pass_record(challenge, head_sha, run_id, run_attempt),
+            )
         elif verdict == "rejected":
             body = comment_body("rejected", challenge, head_sha, run_url, reason=trusted["reason"])
         else:
@@ -271,6 +306,10 @@ def main() -> int:
         print("The PR moved on while reporting; the next run reports instead.")
         return 0
     upsert_comment(gh, number, head_sha, body)
+    # Keep exactly one challenge label: the one for this commit.
+    for name in sorted(pr_labels):
+        if name.startswith(CHALLENGE_LABEL) and name not in labels:
+            gh.request("DELETE", f"/repos/{gh.repo}/issues/{number}/labels/{urllib.parse.quote(name, safe='')}")
     if labels:
         gh.request("POST", f"/repos/{gh.repo}/issues/{number}/labels", body={"labels": labels})
     if close:

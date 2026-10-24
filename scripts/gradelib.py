@@ -209,8 +209,20 @@ class GitHub:
                     url = part[part.find("<") + 1 : part.find(">")]
         return items[:limit]
 
-    def pr_changes(self, number: int) -> list[FileChange]:
-        files = self.paginate(f"/repos/{self.repo}/pulls/{number}/files", limit=MAX_CHANGED_FILES + 1)
+    def commit_changes(self, head_sha: str, base: str = "main") -> list[FileChange]:
+        """Files a commit changes compared with its merge base with main.
+
+        Scope decisions use this rather than the PR's live file list: a SHA
+        names one fixed tree, while a PR can be force-pushed between two API
+        calls.
+        """
+        if not SHA_RE.match(head_sha):
+            raise ValueError("unexpected head SHA")
+        data = self.get(f"/repos/{self.repo}/compare/{base}...{head_sha}?per_page=100")
+        files = data.get("files") or []
+        if len(files) > MAX_CHANGED_FILES or len(files) >= 300:
+            # Too many to grade; the exact list does not matter past this point.
+            files = files[: MAX_CHANGED_FILES + 1]
         return [
             FileChange(path=f["filename"], status=f["status"], previous_path=f.get("previous_filename"))
             for f in files

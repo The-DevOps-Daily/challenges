@@ -10,7 +10,7 @@
     {
       "id": "build",
       "name": "The image builds",
-      "description": "docker build finishes within 10 minutes on a GitHub-hosted ubuntu-24.04 runner. A # syntax= line may only name docker/dockerfile."
+      "description": "docker build finishes within 10 minutes on a GitHub-hosted ubuntu-24.04 runner, with the Dockerfile frontend that ships with Docker (no # syntax= line)."
     },
     {
       "id": "size",
@@ -30,7 +30,7 @@
     {
       "id": "works",
       "name": "The app still works",
-      "description": "GET /slugify?text=... returns the right slug for a random text, so the image runs the real app."
+      "description": "The real app answers: GET /slugify returns the right slug for three random texts with accented and non-Latin words, answers 400 without text, and gunicorn serves it."
     }
   ]
 }

@@ -86,8 +86,8 @@ Usage:
 | File or stdin | The log is read from a file, from stdin, from `-`, and from a file name with a space in it. |
 | Options and usage errors | `-n` works, and bad arguments exit 2 with a message on stderr. |
 | Unreadable input | A missing file, an unreadable file and a directory exit 1 with a message on stderr. |
-| Random logs | Three logs generated at random during grading get the right report. |
-| Speed | A 100,000-line log is summarized correctly in under 10 seconds. |
+| Random logs | Three logs generated at random during grading get the right report. The script only sees the logs, not the answers. |
+| Speed | A random 100,000-line log is summarized correctly in under 10 seconds. The time includes about a second to start the container. |
 
 The grader runs your script as `bash summarize.sh ...` in an `ubuntu:24.04` container with no network and an unprivileged user. That image has bash 5.2, GNU coreutils, grep and sed, and **mawk** as `awk`. gawk-only features such as `asort` or `PROCINFO["sorted_in"]` are not there.
 

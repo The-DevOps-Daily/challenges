@@ -27,8 +27,8 @@ Fix the files in `k8s/` so that:
 Keep these as they are:
 
 - the image `devops-daily/inventory-api:1.0`, one container per pod and 2 replicas,
-- a readiness probe and a liveness probe (fix them, do not delete them),
-- the store name `riverside`,
+- a readiness probe and a liveness probe, both HTTP (`httpGet`) probes with delays and periods of at most 60 seconds (fix them, do not delete them),
+- `STORE_NAME` set from a ConfigMap, and the store name `riverside`,
 - the Service on port 80, type `ClusterIP`.
 
 Do not set a namespace in the manifests; the grader applies them to its own namespace.
@@ -39,11 +39,11 @@ The grader builds the app image from `main`, starts a [kind](https://kind.sigs.k
 
 | Check | Passes when |
 | --- | --- |
-| The manifests apply | The files in `k8s/` parse and apply, and define only the `inventory-api` Deployment and Service plus ConfigMaps. The image, the 2 replicas and both probes stay in place, and pods stay off the node's namespaces and files. |
+| The manifests apply | The files in `k8s/` parse and apply, and define only the `inventory-api` Deployment and Service plus ConfigMaps. The image, the 2 replicas and both HTTP probes stay in place, `STORE_NAME` comes from a ConfigMap, and pods stay off the node's namespaces and files. |
 | The rollout finishes | `kubectl rollout status deployment/inventory-api` succeeds within 120 seconds, with 2 of 2 replicas ready. |
 | The Service has endpoints | The `inventory-api` Service routes to at least one ready pod. |
 | The Service answers | `GET /` on port 80 of the Service's cluster IP answers HTTP 200 with the store name from the ConfigMap. |
-| The pods stay up | No container restarts, checked 30 seconds after the other checks. |
+| The pods stay up | 30 seconds after the other checks, the grader calls the URLs both probes call and they answer, 2 of 2 replicas are still ready, and no container restarted. |
 
 When a check fails, the grader says what it saw (for example, how many pods are ready and in which state), not what to change.
 

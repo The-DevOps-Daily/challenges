@@ -2,27 +2,44 @@
 # Tests for summarize.sh. Every test name starts with the id of the check it
 # belongs to in challenge.json. run.sh runs the script under test in a
 # throwaway container, so the script cannot touch these tests or the runner.
+# Only the input logs are in DATA_DIR, the folder the container sees. The
+# expected reports stay outside it, in ANSWERS_DIR.
 
 bats_require_minimum_version 1.5.0
 
 setup_file() {
   export DATA_DIR="$BATS_FILE_TMPDIR/data"
-  mkdir -p "$DATA_DIR"
+  export ANSWERS_DIR="$BATS_FILE_TMPDIR/answers"
+  mkdir -p "$DATA_DIR" "$ANSWERS_DIR"
   cp "$BATS_TEST_DIRNAME"/fixtures/*.log "$DATA_DIR/"
   cp "$DATA_DIR/basic.log" "$DATA_DIR/my access.log"
   cp "$DATA_DIR/basic.log" "$DATA_DIR/locked.log"
   chmod 000 "$DATA_DIR/locked.log"
   mkdir "$DATA_DIR/a-directory"
 
-  local seed
-  for i in 1 2 3; do
+  # Random logs get random file names too, so a script cannot tell them
+  # apart by name.
+  local seed name
+  for i in 1 2 3 4; do
     seed=$(( (RANDOM << 15) | RANDOM ))
-    python3 "$BATS_TEST_DIRNAME/gen_log.py" --seed "$seed" --lines $((i * 1500)) --top $((i + 2)) \
-      --log "$DATA_DIR/random-$i.log" --expected "$DATA_DIR/random-$i.expected"
+    name="access-$(od -An -N6 -tx1 /dev/urandom | tr -d ' \n').log"
+    echo "$name" > "$ANSWERS_DIR/random-$i.name"
+    if ((i == 4)); then
+      python3 "$BATS_TEST_DIRNAME/gen_log.py" --seed "$seed" --lines 100000 \
+        --log "$DATA_DIR/$name" --expected "$ANSWERS_DIR/random-$i.expected"
+    else
+      python3 "$BATS_TEST_DIRNAME/gen_log.py" --seed "$seed" --lines $((i * 1500)) --top $((i + 2)) \
+        --log "$DATA_DIR/$name" --expected "$ANSWERS_DIR/random-$i.expected"
+    fi
   done
-  seed=$(( (RANDOM << 15) | RANDOM ))
-  python3 "$BATS_TEST_DIRNAME/gen_log.py" --seed "$seed" --lines 100000 \
-    --log "$DATA_DIR/big.log" --expected "$DATA_DIR/big.expected"
+}
+
+random_log() {
+  cat "$ANSWERS_DIR/random-$1.name"
+}
+
+random_expected() {
+  cat "$ANSWERS_DIR/random-$1.expected"
 }
 
 teardown_file() {
@@ -153,31 +170,33 @@ expected() {
 # --- random -----------------------------------------------------------------
 
 @test "[random] gives the right report for a random log (1,500 lines, -n 3)" {
-  run --separate-stderr solution -n 3 random-1.log < /dev/null
+  run --separate-stderr solution -n 3 "$(random_log 1)" < /dev/null
   [ "$status" -eq 0 ]
-  [ "$output" = "$(cat "$DATA_DIR/random-1.expected")" ]
+  [ "$output" = "$(random_expected 1)" ]
 }
 
 @test "[random] gives the right report for a random log (3,000 lines, -n 4)" {
-  run --separate-stderr solution -n 4 random-2.log < /dev/null
+  run --separate-stderr solution -n 4 "$(random_log 2)" < /dev/null
   [ "$status" -eq 0 ]
-  [ "$output" = "$(cat "$DATA_DIR/random-2.expected")" ]
+  [ "$output" = "$(random_expected 2)" ]
 }
 
 @test "[random] gives the right report for a random log on stdin (4,500 lines, -n 5)" {
-  run --separate-stderr solution -n 5 < "$DATA_DIR/random-3.log"
+  run --separate-stderr solution -n 5 < "$DATA_DIR/$(random_log 3)"
   [ "$status" -eq 0 ]
-  [ "$output" = "$(cat "$DATA_DIR/random-3.expected")" ]
+  [ "$output" = "$(random_expected 3)" ]
 }
 
 # --- speed ------------------------------------------------------------------
 
+# The time includes starting the container, about a second.
 @test "[speed] summarizes 100,000 lines correctly in under 10 seconds" {
-  local start end
+  local start end log
+  log=$(random_log 4)
   start=$(date +%s%N)
-  run --separate-stderr solution big.log < /dev/null
+  run --separate-stderr solution "$log" < /dev/null
   end=$(date +%s%N)
   [ "$status" -eq 0 ]
-  [ "$output" = "$(cat "$DATA_DIR/big.expected")" ]
+  [ "$output" = "$(random_expected 4)" ]
   [ $(( (end - start) / 1000000 )) -lt 10000 ]
 }

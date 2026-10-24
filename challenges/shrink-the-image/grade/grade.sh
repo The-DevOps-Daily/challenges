@@ -30,17 +30,15 @@ if [[ ! -f $dockerfile ]]; then
 fi
 
 # A "# syntax=" line makes BuildKit run a frontend image of the author's
-# choice. Only Docker's own Dockerfile frontend is allowed.
-syntax=$(awk '
-  /^[[:space:]]*#/ {
-    line = tolower($0)
-    if (line ~ /^[[:space:]]*#[[:space:]]*syntax[[:space:]]*=/) { sub(/^[^=]*=[[:space:]]*/, "", line); print line; exit }
-    next
-  }
-  { exit }
-' "$dockerfile")
-if [[ -n $syntax && ! $syntax =~ ^(docker\.io/)?docker/dockerfile(-upstream)?(:[a-z0-9.-]+)?(@sha256:[0-9a-f]{64})?[[:space:]]*$ ]]; then
-  record build fail "The Dockerfile asks for a custom syntax frontend. Only docker/dockerfile is allowed."
+# choice, so any such line is refused. BuildKit skips a UTF-8 byte order mark,
+# so strip one before looking.
+if grep -q $'\x00' "$dockerfile"; then
+  record build fail "The Dockerfile is not a text file."
+  skip "Skipped: the image did not build." size non-root starts works
+  exit 0
+fi
+if sed '1s/^\xEF\xBB\xBF//' "$dockerfile" | grep -Eiq '^[[:space:]]*#[[:space:]]*syntax[[:space:]]*='; then
+  record build fail "The Dockerfile has a # syntax= line. Remove it: the grader builds with the Dockerfile frontend that ships with Docker."
   skip "Skipped: the image did not build." size non-root starts works
   exit 0
 fi
@@ -119,8 +117,10 @@ case ${config_user%%:*} in
     record non-root fail "The image sets USER to root." ;;
   * )
     if [[ $started == true ]]; then
-      uids=$(docker top "$cid" -eo uid | tail -n +2 | tr -d ' ' | sort -u | paste -sd, -)
-      if [[ ,$uids, == *,0,* ]]; then
+      uids=$(docker top "$cid" -eo pid,uid 2>/dev/null | awk 'NR > 1 && $2 ~ /^[0-9]+$/ { print $2 }' | sort -un | paste -sd, -)
+      if [[ -z $uids ]]; then
+        record non-root fail "Could not read the processes in the container."
+      elif [[ ,$uids, == *,0,* ]]; then
         record non-root fail "USER is set, but a process in the container runs as UID 0."
       else
         record non-root pass "Processes run as UID $uids."
@@ -132,17 +132,43 @@ case ${config_user%%:*} in
 esac
 
 # --- works ----------------------------------------------------------------------
+# Random accented and non-Latin words: the right slugs need python-slugify's
+# transliteration, so a hand-written stand-in for the app does not pass.
+words=(
+  "Crème|creme" "Brûlée|brulee" "Straße|strasse" "Ærøskøbing|aeroskobing" "Łódź|lodz"
+  "naïve|naive" "café|cafe" "Dvořák|dvorak" "São|sao" "Zürich|zurich" "Kraków|krakow"
+  "Málaga|malaga" "Øresund|oresund" "Smörgåsbord|smorgasbord" "piñata|pinata"
+  "jalapeño|jalapeno" "façade|facade" "Göteborg|goteborg" "Reykjavík|reykjavik"
+  "Ελλάδα|ellada" "Москва|moskva" "Déjà|deja" "Œuvre|oeuvre" "Fjörður|fjordur"
+  "Ångström|angstrom" "Señor|senor" "Über|uber"
+)
+separators=(" " ", " " - " "! " "   " " / ")
 if [[ $started == true ]]; then
-  word=$(LC_ALL=C tr -dc '[:lower:]' < /dev/urandom | head -c 8)
-  number=$((RANDOM % 9000 + 1000))
-  text="Shrink $word Image $number"
-  want="shrink-$word-image-$number"
-  body=$(curl -s --max-time 5 -G --data-urlencode "text=$text" "http://127.0.0.1:$PORT/slugify" || true)
-  got=$(python3 -c 'import json,sys; print(json.loads(sys.argv[1]).get("slug",""))' "$body" 2>/dev/null || true)
-  if [[ $got == "$want" ]]; then
-    record works pass "GET /slugify returned the right slug for a random text."
+  problems=()
+  for round in 1 2 3; do
+    text="" want=""
+    for _ in 1 2 3 4; do
+      pick=${words[RANDOM % ${#words[@]}]}
+      text+="${pick%%|*}${separators[RANDOM % ${#separators[@]}]}"
+      want+="${pick##*|}-"
+    done
+    number=$((RANDOM % 9000 + 1000))
+    text+="$number"
+    want+="$number"
+    body=$(curl -s --max-time 5 -G --data-urlencode "text=$text" "http://127.0.0.1:$PORT/slugify" || true)
+    got=$(python3 -c 'import json,sys; print(json.loads(sys.argv[1]).get("slug",""))' "$body" 2>/dev/null || true)
+    [[ $got == "$want" ]] || problems+=("round $round")
+  done
+  missing=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "http://127.0.0.1:$PORT/slugify" || true)
+  server=$(curl -s -o /dev/null -D - --max-time 5 "http://127.0.0.1:$PORT/health" | tr -d '\r' | awk -F': ' 'tolower($1) == "server" { print tolower($2) }')
+  if ((${#problems[@]} > 0)); then
+    record works fail "GET /slugify returned the wrong slug for ${#problems[@]} of 3 random texts."
+  elif [[ $missing != 400 ]]; then
+    record works fail "GET /slugify without text answered $missing, not 400."
+  elif [[ $server != gunicorn* ]]; then
+    record works fail "The app is not served by gunicorn, as in the starter's CMD."
   else
-    record works fail "GET /slugify did not return the right slug for a random text."
+    record works pass "GET /slugify returned the right slugs for 3 random texts, served by gunicorn."
   fi
 else
   record works skip "Skipped: the app did not start."

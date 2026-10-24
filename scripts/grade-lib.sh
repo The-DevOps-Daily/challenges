@@ -9,7 +9,9 @@ record() {
   detail=${detail//$'\t'/ }
   detail=${detail//$'\n'/ }
   printf '%s\t%s\t%s\n' "$id" "$status" "$detail" >> "$GRADE_RESULTS"
-  printf '%-4s  %s  %s\n' "$status" "$id" "$detail"
+  # Details can quote the submission; break up "::" so the runner never reads
+  # a workflow command in the log line.
+  printf '%-4s  %s  %s\n' "$status" "$id" "${detail//::/: :}"
 }
 
 # fetch URL SHA256 DEST

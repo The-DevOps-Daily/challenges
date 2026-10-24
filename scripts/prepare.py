@@ -50,7 +50,6 @@ def copy_challenge(cid: str, work: Path) -> None:
 
 def main() -> int:
     gh = GitHub()
-    pr_number = int(os.environ["PR_NUMBER"])
     head_sha = os.environ["HEAD_SHA"]
     base_ref = os.environ["BASE_REF"]
     out_dir = Path(os.environ["RUNNER_TEMP"]) / "grade"
@@ -63,7 +62,7 @@ def main() -> int:
     set_output("graded", "false")
     challenges = load_challenges()
 
-    all_changes = gh.pr_changes(pr_number)
+    all_changes = gh.commit_changes(head_sha)
     if base_ref != "main":
         scope = Scope("rejected", reason="base_not_main")
     else:

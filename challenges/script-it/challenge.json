@@ -40,12 +40,12 @@
     {
       "id": "random",
       "name": "Random logs",
-      "description": "Gives the right report for three logs generated at random during grading, so the answers cannot be known in advance."
+      "description": "Gives the right report for three logs generated at random during grading. Their names and answers are not visible to the script."
     },
     {
       "id": "speed",
       "name": "Speed",
-      "description": "Summarizes a 100,000-line log correctly in under 10 seconds."
+      "description": "Summarizes a random 100,000-line log correctly in under 10 seconds, including about a second to start the container."
     }
   ]
 }

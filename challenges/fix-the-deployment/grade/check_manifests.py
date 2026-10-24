@@ -1,7 +1,11 @@
 """Check the objects in the submitted manifests before anything is applied.
 
-Reads the JSON that `kubectl create --dry-run=client -o json` printed for the
-k8s/ folder and prints one line per problem. Exit code 0 means no problems.
+  check_manifests.py OBJECTS_JSON CHECKED_LIST_JSON
+
+Reads what `kubectl create --dry-run=client -o json` printed for the k8s/
+folder (one JSON document per object, or a List) and prints one line per
+problem. With no problems it writes the objects as one List to
+CHECKED_LIST_JSON, which is what the grader applies, and exits 0.
 The rules keep the submission to the objects the challenge is about, and keep
 pods away from the node (the grader's cluster runs on the CI runner).
 """
@@ -12,16 +16,62 @@ import json
 import sys
 
 IMAGE = "devops-daily/inventory-api:1.0"
+MAX_PROBE_SECONDS = 60
 NAMESPACE = "challenge"
 ALLOWED = {("apps/v1", "Deployment"), ("v1", "Service"), ("v1", "ConfigMap")}
 SAFE_VOLUMES = {"configMap", "emptyDir", "downwardAPI", "projected"}
 SAFE_PROJECTIONS = {"configMap", "downwardAPI"}
 
 
-def objects(doc: dict) -> list[dict]:
-    if doc.get("kind") == "List":
-        return list(doc.get("items") or [])
-    return [doc]
+def read_documents(text: str) -> list[dict]:
+    decoder = json.JSONDecoder()
+    docs, pos = [], 0
+    while True:
+        while pos < len(text) and text[pos].isspace():
+            pos += 1
+        if pos >= len(text):
+            return docs
+        doc, pos = decoder.raw_decode(text, pos)
+        docs.append(doc)
+
+
+def objects(docs: list) -> list:
+    items: list = []
+    for doc in docs:
+        if isinstance(doc, dict) and doc.get("kind") == "List":
+            items.extend(doc.get("items") or [])
+        else:
+            items.append(doc)
+    return items
+
+
+def check_probe(name: str, probe: dict, problems: list[str]) -> None:
+    http = probe.get("httpGet")
+    if not http or set(probe) & {"exec", "tcpSocket", "grpc"}:
+        problems.append(f"The {name} must be an HTTP (httpGet) probe.")
+        return
+    if http.get("scheme", "HTTP") != "HTTP" or http.get("host"):
+        problems.append(f"The {name} must call the pod over plain HTTP, without a host.")
+    for field in ("initialDelaySeconds", "periodSeconds", "timeoutSeconds"):
+        value = probe.get(field, 0)
+        if not isinstance(value, int) or value > MAX_PROBE_SECONDS:
+            problems.append(f"The {name} sets {field} above {MAX_PROBE_SECONDS} seconds.")
+    threshold = probe.get("failureThreshold", 3)
+    if not isinstance(threshold, int) or threshold > 10:
+        problems.append(f"The {name} sets failureThreshold above 10.")
+
+
+def store_from_configmap(container: dict) -> bool:
+    """STORE_NAME is set from a ConfigMap, not written into the Deployment.
+
+    Whether the referenced key exists is left to the cluster: a wrong key is
+    one of the bugs to find at run time.
+    """
+    for env in container.get("env") or []:
+        if env.get("name") == "STORE_NAME":
+            ref = (env.get("valueFrom") or {}).get("configMapKeyRef") or {}
+            return bool(ref.get("name") and ref.get("key"))
+    return any((source.get("configMapRef") or {}).get("name") for source in container.get("envFrom") or [])
 
 
 def check_pod_spec(spec: dict, problems: list[str]) -> None:
@@ -60,13 +110,20 @@ def check_pod_spec(spec: dict, problems: list[str]) -> None:
         for probe in ("readinessProbe", "livenessProbe"):
             if not container.get(probe):
                 problems.append(f"The container has no {probe}. Keep both probes and make them work.")
+            else:
+                check_probe(probe, container[probe], problems)
+        if container.get("startupProbe"):
+            problems.append("The container adds a startupProbe. Keep to the readiness and liveness probes.")
+        if not store_from_configmap(container):
+            problems.append("STORE_NAME must come from a ConfigMap (configMapKeyRef or envFrom), not a value in the Deployment.")
 
 
-def check(doc: dict) -> list[str]:
+def check(items: list) -> list[str]:
     problems: list[str] = []
-    items = objects(doc)
     if len(items) > 10:
         return ["The manifests define more than 10 objects."]
+    if not all(isinstance(obj, dict) for obj in items):
+        return ["The manifests contain something that is not a Kubernetes object."]
 
     deployments, services = [], []
     for obj in items:
@@ -115,11 +172,20 @@ def check(doc: dict) -> list[str]:
 
 def main() -> int:
     with open(sys.argv[1], encoding="utf-8") as fh:
-        doc = json.load(fh)
-    problems = check(doc)
+        text = fh.read()
+    try:
+        items = objects(read_documents(text))
+    except ValueError:
+        print("kubectl printed something that is not JSON for the manifests.")
+        return 1
+    problems = check(items)
     for problem in problems:
         print(problem)
-    return 1 if problems else 0
+    if problems:
+        return 1
+    with open(sys.argv[2], "w", encoding="utf-8") as fh:
+        json.dump({"apiVersion": "v1", "kind": "List", "items": items}, fh)
+    return 0
 
 
 if __name__ == "__main__":

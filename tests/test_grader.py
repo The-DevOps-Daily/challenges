@@ -9,6 +9,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 from gradelib import FileChange, evaluate_scope, load_challenges, match_path, sanitize_detail  # noqa: E402
 from report import BadResult, validate  # noqa: E402
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "challenges" / "fix-the-deployment" / "grade"))
+import check_manifests  # noqa: E402
+
 CHALLENGES = load_challenges()
 SHA = "a" * 40
 
@@ -133,6 +136,59 @@ class ValidateTests(unittest.TestCase):
 
     def test_sanitize_length(self):
         self.assertLessEqual(len(sanitize_detail("x" * 5000)), 300)
+
+
+
+def deployment(**container_overrides):
+    container = {
+        "name": "api",
+        "image": "devops-daily/inventory-api:1.0",
+        "env": [{"name": "STORE_NAME", "valueFrom": {"configMapKeyRef": {"name": "inventory-config", "key": "store-name"}}}],
+        "readinessProbe": {"httpGet": {"path": "/healthz", "port": 8080}},
+        "livenessProbe": {"httpGet": {"path": "/healthz", "port": 8080}},
+    }
+    container.update(container_overrides)
+    return {
+        "apiVersion": "apps/v1",
+        "kind": "Deployment",
+        "metadata": {"name": "inventory-api"},
+        "spec": {"replicas": 2, "template": {"spec": {"containers": [container]}}},
+    }
+
+
+SERVICE = {"apiVersion": "v1", "kind": "Service", "metadata": {"name": "inventory-api"}, "spec": {"selector": {"app": "x"}}}
+
+
+class ManifestTests(unittest.TestCase):
+    def test_good_manifests(self):
+        self.assertEqual(check_manifests.check([deployment(), SERVICE]), [])
+
+    def test_json_stream_and_lists(self):
+        text = '{"kind": "List", "items": [{"kind": "Pod"}]}\n{"kind": "Service"}'
+        items = check_manifests.objects(check_manifests.read_documents(text))
+        self.assertEqual([i["kind"] for i in items], ["Pod", "Service"])
+
+    def test_privileged_and_host_access_are_refused(self):
+        bad = deployment(securityContext={"privileged": True})
+        bad["spec"]["template"]["spec"]["hostPID"] = True
+        bad["spec"]["template"]["spec"]["volumes"] = [{"name": "root", "hostPath": {"path": "/"}}]
+        problems = " ".join(check_manifests.check([bad, SERVICE]))
+        for word in ("privileged", "hostPID", "volume type"):
+            self.assertIn(word, problems)
+
+    def test_other_kinds_and_images_are_refused(self):
+        crb = {"apiVersion": "rbac.authorization.k8s.io/v1", "kind": "ClusterRoleBinding", "metadata": {"name": "x"}}
+        self.assertTrue(check_manifests.check([deployment(), SERVICE, crb]))
+        self.assertTrue(check_manifests.check([deployment(image="nginx"), SERVICE]))
+
+    def test_literal_store_name_is_refused(self):
+        self.assertTrue(check_manifests.check([deployment(env=[{"name": "STORE_NAME", "value": "riverside"}]), SERVICE]))
+
+    def test_probes_must_be_http_and_prompt(self):
+        self.assertTrue(check_manifests.check([deployment(livenessProbe={"tcpSocket": {"port": 8080}}), SERVICE]))
+        slow = {"httpGet": {"path": "/healthz", "port": 8080}, "initialDelaySeconds": 3600}
+        self.assertTrue(check_manifests.check([deployment(livenessProbe=slow), SERVICE]))
+        self.assertTrue(check_manifests.check([deployment(readinessProbe=None), SERVICE]))
 
 
 if __name__ == "__main__":

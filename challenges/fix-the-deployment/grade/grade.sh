@@ -48,6 +48,7 @@ kubectl label namespace "$NS" \
 
 # --- manifests ------------------------------------------------------------------
 objects="$out/objects.json"
+checked="$out/checked.json"
 shopt -s nullglob
 files=("$work"/k8s/*.yaml "$work"/k8s/*.yml)
 shopt -u nullglob
@@ -63,20 +64,20 @@ if ! kubectl create --dry-run=client -n "$NS" -o json "${args[@]}" > "$objects" 
   skip "Skipped: the manifests were not applied." rollout endpoints answers stable
   exit 0
 fi
-if ! problems=$(python3 "$GRADE_DIR/check_manifests.py" "$objects"); then
+if ! problems=$(python3 "$GRADE_DIR/check_manifests.py" "$objects" "$checked"); then
   record manifests fail "$(head -n 3 <<<"$problems" | paste -sd ' ' -)"
   skip "Skipped: the manifests were not applied." rollout endpoints answers stable
   exit 0
 fi
 # Apply exactly the objects that were checked, not the files again.
-if ! kubectl apply -n "$NS" -f "$objects" > "$out/apply.log" 2>&1; then
+if ! kubectl apply -n "$NS" -f "$checked" > "$out/apply.log" 2>&1; then
   record manifests fail "kubectl apply failed: $(grep -m1 -iE 'error|invalid|forbidden' "$out/apply.log" | cut -c1-200)"
   print_untrusted "$out/apply.log"
   skip "Skipped: the manifests were not applied." rollout endpoints answers stable
   exit 0
 fi
 print_untrusted "$out/apply.log"
-record manifests pass "Applied a Deployment, a Service and $(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); i=d.get("items",[d]); print(sum(1 for o in i if o.get("kind")=="ConfigMap"))' "$objects") ConfigMap(s)."
+record manifests pass "Applied a Deployment, a Service and $(python3 -c 'import json,sys; print(sum(1 for o in json.load(open(sys.argv[1]))["items"] if o.get("kind")=="ConfigMap"))' "$checked") ConfigMap(s)."
 
 # --- rollout --------------------------------------------------------------------
 rolled_out=false
@@ -134,16 +135,36 @@ else
 fi
 
 # --- stable ---------------------------------------------------------------------
+# Wait, then call the URLs the probes call (a liveness probe with a long delay
+# could otherwise hide a wrong path), count restarts and check readiness again.
 if [[ $rolled_out == true ]]; then
   sleep 30
-  restarts=$(kubectl -n "$NS" get pods -o json | python3 -c '
+  kubectl -n "$NS" get pods -o json > "$out/pods-after.json"
+  bad_probes=()
+  while read -r probe url; do
+    [[ -n $probe ]] || continue
+    if [[ $url == invalid ]]; then
+      bad_probes+=("$probe")
+      continue
+    fi
+    code=$(docker exec "$NODE" curl -s -o /dev/null -w '%{http_code}' --max-time 3 "$url" 2>/dev/null || true)
+    [[ $code =~ ^[23][0-9][0-9]$ ]] || bad_probes+=("$probe")
+  done < <(python3 "$GRADE_DIR/probe_targets.py" "$out/pods-after.json")
+  restarts=$(python3 -c '
 import json, sys
-print(sum(int(c.get("restartCount") or 0) for p in json.load(sys.stdin).get("items", []) for c in (p.get("status") or {}).get("containerStatuses") or []))
-')
-  if [[ ${restarts:-1} == 0 ]]; then
-    record stable pass "No container restarts after 30 more seconds."
+pods = json.load(open(sys.argv[1])).get("items", [])
+print(sum(int(c.get("restartCount") or 0) for p in pods for c in (p.get("status") or {}).get("containerStatuses") or []))
+' "$out/pods-after.json")
+  ready_now=$(kubectl -n "$NS" get deployment inventory-api -o jsonpath='{.status.readyReplicas}')
+  if ((${#bad_probes[@]} > 0)); then
+    names=$(printf '%s\n' "${bad_probes[@]}" | sort -u | paste -sd, - | sed 's/,/, /g')
+    record stable fail "A probe request does not succeed when the grader sends it to a running pod: $names."
+  elif [[ ${restarts:-1} != 0 ]]; then
+    record stable fail "Containers restarted ${restarts} time(s)."
+  elif [[ ${ready_now:-0} != 2 ]]; then
+    record stable fail "30 seconds later, ${ready_now:-0} of 2 replicas are ready."
   else
-    record stable fail "Containers restarted ${restarts} time(s). Something keeps killing them."
+    record stable pass "Both probes answer, 2 of 2 replicas are still ready and no container restarted."
   fi
 else
   record stable skip "Skipped: the Deployment did not roll out."
