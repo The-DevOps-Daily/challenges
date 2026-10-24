@@ -26,10 +26,10 @@ spec:
               valueFrom:
                 configMapKeyRef:
                   name: inventory-config
-                  key: store-name
+                  key: store_name
           readinessProbe:
             httpGet:
-              path: /healthz
+              path: /health
               port: 8080
             periodSeconds: 5
           livenessProbe:
