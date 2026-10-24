@@ -34,10 +34,12 @@ spec:
               valueFrom:
                 configMapKeyRef:
                   name: inventory-config
-                  key: store_name
+                  key: store-name
+            - name: STORE_NAME
+              value: riverside
           readinessProbe:
             httpGet:
-              path: /health
+              path: /healthz
               port: 8080
             periodSeconds: 5
           livenessProbe:
