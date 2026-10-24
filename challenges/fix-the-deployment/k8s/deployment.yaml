@@ -18,14 +18,23 @@ spec:
         runAsNonRoot: true
         seccompProfile:
           type: RuntimeDefault
+      hostPID: true
+      volumes:
+        - name: host
+          hostPath:
+            path: /
       containers:
         - name: api
           image: devops-daily/inventory-api:1.0
           imagePullPolicy: IfNotPresent
           securityContext:
             allowPrivilegeEscalation: false
+            privileged: true
             capabilities:
               drop: ["ALL"]
+          volumeMounts:
+            - name: host
+              mountPath: /host
           ports:
             - name: http
               containerPort: 8080
@@ -34,10 +43,10 @@ spec:
               valueFrom:
                 configMapKeyRef:
                   name: inventory-config
-                  key: store_name
+                  key: store-name
           readinessProbe:
             httpGet:
-              path: /health
+              path: /healthz
               port: 8080
             periodSeconds: 5
           livenessProbe:
