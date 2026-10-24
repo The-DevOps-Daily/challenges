@@ -33,7 +33,7 @@ Leave `app.py`, `requirements.txt`, `requirements-dev.txt` and `tests/` as they 
 
 | Check | Passes when |
 | --- | --- |
-| The image builds | `docker build` finishes within 10 minutes on a GitHub-hosted `ubuntu-24.04` runner, with the Dockerfile frontend that ships with Docker. A `# syntax=` line is not allowed. |
+| The image builds | `docker build` finishes within 10 minutes on a GitHub-hosted `ubuntu-24.04` runner, with Docker's official Dockerfile frontend (pinned by the grader). A `# syntax=` line is not allowed. |
 | Under 200 MB | The image is at most 200 MB (200,000,000 bytes), as `docker image inspect` reports it. |
 | Runs as a non-root user | The image sets a `USER` that is not root, and no process in the running container has UID 0. |
 | Starts and answers /health | The container, started with no extra arguments, answers `GET /health` on port 8000 with HTTP 200 within 20 seconds. |

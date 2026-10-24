@@ -144,15 +144,18 @@ def deployment(**container_overrides):
         "name": "api",
         "image": "devops-daily/inventory-api:1.0",
         "env": [{"name": "STORE_NAME", "valueFrom": {"configMapKeyRef": {"name": "inventory-config", "key": "store-name"}}}],
-        "readinessProbe": {"httpGet": {"path": "/healthz", "port": 8080}},
+        "ports": [{"name": "http", "containerPort": 8080}],
+        "readinessProbe": {"httpGet": {"path": "/healthz", "port": "http"}},
         "livenessProbe": {"httpGet": {"path": "/healthz", "port": 8080}},
+        "securityContext": {"allowPrivilegeEscalation": False, "capabilities": {"drop": ["ALL"]}},
     }
     container.update(container_overrides)
+    pod_security = {"runAsNonRoot": True, "seccompProfile": {"type": "RuntimeDefault"}}
     return {
         "apiVersion": "apps/v1",
         "kind": "Deployment",
         "metadata": {"name": "inventory-api"},
-        "spec": {"replicas": 2, "template": {"spec": {"containers": [container]}}},
+        "spec": {"replicas": 2, "template": {"spec": {"securityContext": pod_security, "containers": [container]}}},
     }
 
 
@@ -189,6 +192,32 @@ class ManifestTests(unittest.TestCase):
         slow = {"httpGet": {"path": "/healthz", "port": 8080}, "initialDelaySeconds": 3600}
         self.assertTrue(check_manifests.check([deployment(livenessProbe=slow), SERVICE]))
         self.assertTrue(check_manifests.check([deployment(readinessProbe=None), SERVICE]))
+
+    def test_duplicate_env_is_refused(self):
+        env = [
+            {"name": "STORE_NAME", "valueFrom": {"configMapKeyRef": {"name": "inventory-config", "key": "store-name"}}},
+            {"name": "STORE_NAME", "value": "riverside"},
+        ]
+        self.assertIn("more than once", " ".join(check_manifests.check([deployment(env=env), SERVICE])))
+
+    def test_literal_store_name_beside_env_from_is_refused(self):
+        dep = deployment(env=[{"name": "STORE_NAME", "value": "riverside"}], envFrom=[{"configMapRef": {"name": "c"}}])
+        self.assertTrue(check_manifests.check([dep, SERVICE]))
+
+    def test_probe_paths_and_ports_are_plain(self):
+        for path in ("/healthz -o /tmp/x", "/a\nb", "http://evil/", "/{a,b}", "/x?y=1"):
+            probe = {"httpGet": {"path": path, "port": 8080}}
+            self.assertTrue(check_manifests.check([deployment(livenessProbe=probe), SERVICE]), path)
+        for port in (0, 70000, "nope", True):
+            probe = {"httpGet": {"path": "/healthz", "port": port}}
+            self.assertTrue(check_manifests.check([deployment(livenessProbe=probe), SERVICE]), port)
+
+    def test_root_and_restricted_rules(self):
+        self.assertTrue(check_manifests.check([deployment(securityContext={"runAsUser": 0}), SERVICE]))
+        self.assertTrue(check_manifests.check([deployment(securityContext={}), SERVICE]))
+        dep = deployment()
+        dep["spec"]["template"]["spec"]["securityContext"] = {}
+        self.assertTrue(check_manifests.check([dep, SERVICE]))
 
 
 if __name__ == "__main__":

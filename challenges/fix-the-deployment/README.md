@@ -29,17 +29,18 @@ Keep these as they are:
 - the image `devops-daily/inventory-api:1.0`, one container per pod and 2 replicas,
 - a readiness probe and a liveness probe, both HTTP (`httpGet`) probes with delays and periods of at most 60 seconds (fix them, do not delete them),
 - `STORE_NAME` set from a ConfigMap, and the store name `riverside`,
+- the `securityContext` settings (non-root, no privilege escalation, all capabilities dropped, the RuntimeDefault seccomp profile): the grader's namespace enforces Pod Security "restricted",
 - the Service on port 80, type `ClusterIP`.
 
 Do not set a namespace in the manifests; the grader applies them to its own namespace.
 
 ## What the grader checks
 
-The grader builds the app image from `main`, starts a [kind](https://kind.sigs.k8s.io/) cluster (Kubernetes 1.37), loads the image, and applies your `k8s/` files to a namespace that enforces Pod Security "baseline".
+The grader builds the app image from `main`, starts a [kind](https://kind.sigs.k8s.io/) cluster (Kubernetes 1.37), loads the image, checks your `k8s/` files, and only then applies them to a namespace that enforces Pod Security "restricted".
 
 | Check | Passes when |
 | --- | --- |
-| The manifests apply | The files in `k8s/` parse and apply, and define only the `inventory-api` Deployment and Service plus ConfigMaps. The image, the 2 replicas and both HTTP probes stay in place, `STORE_NAME` comes from a ConfigMap, and pods stay off the node's namespaces and files. |
+| The manifests apply | The files in `k8s/` parse and apply, and define only the `inventory-api` Deployment and Service plus ConfigMaps. The image, the 2 replicas and both HTTP probes stay in place, `STORE_NAME` comes from a ConfigMap, and the pods meet Pod Security "restricted" (no root, no privileged mode, no host namespaces or host paths). |
 | The rollout finishes | `kubectl rollout status deployment/inventory-api` succeeds within 120 seconds, with 2 of 2 replicas ready. |
 | The Service has endpoints | The `inventory-api` Service routes to at least one ready pod. |
 | The Service answers | `GET /` on port 80 of the Service's cluster IP answers HTTP 200 with the store name from the ConfigMap. |
@@ -83,7 +84,7 @@ docker build -t devops-daily/inventory-api:1.0 app/
 kind load docker-image devops-daily/inventory-api:1.0 --name inventory
 
 kubectl create namespace challenge
-kubectl label namespace challenge pod-security.kubernetes.io/enforce=baseline
+kubectl label namespace challenge pod-security.kubernetes.io/enforce=restricted
 kubectl apply -n challenge -f k8s/
 kubectl -n challenge rollout status deployment/inventory-api --timeout=120s
 

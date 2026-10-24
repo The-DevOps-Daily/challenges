@@ -9,6 +9,11 @@ source "$GRADE_LIB"
 LIMIT_MB=200
 START_SECONDS=20
 IMAGE=challenge/shrink-the-image:graded
+# Every build uses Docker's official Dockerfile frontend, pinned by digest.
+# BUILDKIT_SYNTAX takes precedence over any syntax directive in the file, so
+# a submission cannot pick the frontend even if a directive slips past the
+# check below.
+FRONTEND=docker/dockerfile:1.28.0@sha256:bb22d9815c728170f72750f4e5b0d672e06176142e1d602c7e66c050100b7e5b
 NAME=shrink-the-image-app
 PORT=18000
 work=$GRADE_WORK
@@ -29,23 +34,26 @@ if [[ ! -f $dockerfile ]]; then
   exit 0
 fi
 
-# A "# syntax=" line makes BuildKit run a frontend image of the author's
-# choice, so any such line is refused. BuildKit skips a UTF-8 byte order mark,
-# so strip one before looking.
-if grep -q $'\x00' "$dockerfile"; then
-  record build fail "The Dockerfile is not a text file."
+# A syntax directive would make BuildKit run a frontend image of the
+# author's choice. The build pins the frontend anyway (FRONTEND above); this
+# check gives a clear message first. BuildKit skips a UTF-8 byte order mark,
+# so strip one before looking, and look at every line, in # and // forms.
+if [[ $(tr -d '\000' < "$dockerfile" | wc -c) -ne $(wc -c < "$dockerfile") ]]; then
+  record build fail "The Dockerfile contains NUL bytes; it must be a text file."
   skip "Skipped: the image did not build." size non-root starts works
   exit 0
 fi
-if sed '1s/^\xEF\xBB\xBF//' "$dockerfile" | grep -Eiq '^[[:space:]]*#[[:space:]]*syntax[[:space:]]*='; then
-  record build fail "The Dockerfile has a # syntax= line. Remove it: the grader builds with the Dockerfile frontend that ships with Docker."
+if sed '1s/^\xEF\xBB\xBF//' "$dockerfile" | grep -Eiq '^[[:space:]]*(#|//)[[:space:]]*syntax[[:space:]]*='; then
+  record build fail "The Dockerfile has a syntax directive (# syntax=...). Remove it: the grader always builds with Docker's own Dockerfile frontend."
   skip "Skipped: the image did not build." size non-root starts works
   exit 0
 fi
 
 build_log="$GRADE_OUT/build.log"
 start=$(date +%s)
-DOCKER_BUILDKIT=1 timeout 600 docker build --pull --progress=plain -t "$IMAGE" "$work" > "$build_log" 2>&1
+DOCKER_BUILDKIT=1 timeout 600 docker build --pull --progress=plain \
+  --build-arg "BUILDKIT_SYNTAX=$FRONTEND" \
+  -t "$IMAGE" "$work" > "$build_log" 2>&1
 build_status=$?
 echo "::group::docker build log"
 print_untrusted "$build_log"

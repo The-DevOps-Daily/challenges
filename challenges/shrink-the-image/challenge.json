@@ -10,7 +10,7 @@
     {
       "id": "build",
       "name": "The image builds",
-      "description": "docker build finishes within 10 minutes on a GitHub-hosted ubuntu-24.04 runner, with the Dockerfile frontend that ships with Docker (no # syntax= line)."
+      "description": "docker build finishes within 10 minutes on a GitHub-hosted ubuntu-24.04 runner, with Docker's official Dockerfile frontend, pinned by the grader (no # syntax= line)."
     },
     {
       "id": "size",

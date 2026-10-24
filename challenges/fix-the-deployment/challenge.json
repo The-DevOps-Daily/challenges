@@ -10,7 +10,7 @@
     {
       "id": "manifests",
       "name": "The manifests apply",
-      "description": "The files in k8s/ parse and apply, and only define the inventory-api Deployment and Service plus ConfigMaps. The image, the 2 replicas and both HTTP probes stay in place, STORE_NAME comes from a ConfigMap, and pods stay off the node's namespaces and files."
+      "description": "The files in k8s/ parse and apply, and only define the inventory-api Deployment and Service plus ConfigMaps. The image, the 2 replicas and both HTTP probes stay in place, STORE_NAME comes from a ConfigMap, and the pods meet Pod Security restricted (no root, no privileged mode, no host namespaces or host paths). Nothing is applied until these checks pass."
     },
     {
       "id": "rollout",

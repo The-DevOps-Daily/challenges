@@ -13,10 +13,14 @@ pods away from the node (the grader's cluster runs on the CI runner).
 from __future__ import annotations
 
 import json
+import re
 import sys
 
 IMAGE = "devops-daily/inventory-api:1.0"
 MAX_PROBE_SECONDS = 60
+# The grader itself calls each probe URL later, so the path must be plain.
+PROBE_PATH_RE = re.compile(r"^/[A-Za-z0-9._~/%-]{0,200}$")
+PORT_NAME_RE = re.compile(r"^[a-z0-9]([-a-z0-9]{0,13}[a-z0-9])?$")
 NAMESPACE = "challenge"
 ALLOWED = {("apps/v1", "Deployment"), ("v1", "Service"), ("v1", "ConfigMap")}
 SAFE_VOLUMES = {"configMap", "emptyDir", "downwardAPI", "projected"}
@@ -45,13 +49,26 @@ def objects(docs: list) -> list:
     return items
 
 
-def check_probe(name: str, probe: dict, problems: list[str]) -> None:
+def container_port_names(container: dict) -> set:
+    return {p.get("name") for p in container.get("ports") or [] if p.get("name")}
+
+
+def check_probe(name: str, probe: dict, container: dict, problems: list[str]) -> None:
     http = probe.get("httpGet")
-    if not http or set(probe) & {"exec", "tcpSocket", "grpc"}:
+    if not isinstance(http, dict) or set(probe) & {"exec", "tcpSocket", "grpc"}:
         problems.append(f"The {name} must be an HTTP (httpGet) probe.")
         return
-    if http.get("scheme", "HTTP") != "HTTP" or http.get("host"):
-        problems.append(f"The {name} must call the pod over plain HTTP, without a host.")
+    if http.get("scheme", "HTTP") != "HTTP" or http.get("host") or http.get("httpHeaders"):
+        problems.append(f"The {name} must call the pod over plain HTTP, without a host or extra headers.")
+    path = http.get("path", "/")
+    if not isinstance(path, str) or not PROBE_PATH_RE.match(path):
+        problems.append(f"The {name} path must start with / and use only letters, digits and . _ ~ / % -.")
+    port = http.get("port")
+    if isinstance(port, bool) or not (
+        (isinstance(port, int) and 1 <= port <= 65535)
+        or (isinstance(port, str) and PORT_NAME_RE.match(port) and port in container_port_names(container))
+    ):
+        problems.append(f"The {name} port must be a number from 1 to 65535 or the name of a container port.")
     for field in ("initialDelaySeconds", "periodSeconds", "timeoutSeconds"):
         value = probe.get(field, 0)
         if not isinstance(value, int) or value > MAX_PROBE_SECONDS:
@@ -65,16 +82,45 @@ def store_from_configmap(container: dict) -> bool:
     """STORE_NAME is set from a ConfigMap, not written into the Deployment.
 
     Whether the referenced key exists is left to the cluster: a wrong key is
-    one of the bugs to find at run time.
+    one of the bugs to find at run time. Duplicate names are refused by the
+    caller, so the single env entry, if any, is the effective one (env wins
+    over envFrom).
     """
-    for env in container.get("env") or []:
-        if env.get("name") == "STORE_NAME":
-            ref = (env.get("valueFrom") or {}).get("configMapKeyRef") or {}
-            return bool(ref.get("name") and ref.get("key"))
+    entries = [e for e in container.get("env") or [] if e.get("name") == "STORE_NAME"]
+    if entries:
+        ref = (entries[-1].get("valueFrom") or {}).get("configMapKeyRef") or {}
+        return bool(ref.get("name") and ref.get("key")) and "value" not in entries[-1]
     return any((source.get("configMapRef") or {}).get("name") for source in container.get("envFrom") or [])
 
 
-def check_pod_spec(spec: dict, problems: list[str]) -> None:
+def check_security_context(pod_sc: dict, container: dict, annotations: dict, problems: list[str]) -> None:
+    """The rules of Pod Security "restricted", checked before anything is applied."""
+    sc = container.get("securityContext") or {}
+    if 0 in (pod_sc.get("runAsUser"), sc.get("runAsUser")):
+        problems.append("The pod or container sets runAsUser to 0 (root).")
+    run_as_non_root = sc.get("runAsNonRoot", pod_sc.get("runAsNonRoot"))
+    if run_as_non_root is not True:
+        problems.append("runAsNonRoot must stay true.")
+    if sc.get("allowPrivilegeEscalation") is not False:
+        problems.append("The container must keep allowPrivilegeEscalation: false.")
+    drop = (sc.get("capabilities") or {}).get("drop") or []
+    if "ALL" not in drop:
+        problems.append("The container must keep dropping ALL capabilities.")
+    seccomp = (sc.get("seccompProfile") or pod_sc.get("seccompProfile") or {}).get("type")
+    if seccomp != "RuntimeDefault":
+        problems.append("The seccomp profile must stay RuntimeDefault.")
+    if pod_sc.get("seLinuxOptions") or sc.get("seLinuxOptions"):
+        problems.append("The pod or container sets seLinuxOptions.")
+    for profile in (pod_sc.get("appArmorProfile"), sc.get("appArmorProfile")):
+        if (profile or {}).get("type") == "Unconfined":
+            problems.append("The pod or container turns AppArmor off.")
+    if any(k.startswith("container.apparmor.security.beta.kubernetes.io/") for k in annotations):
+        problems.append("The pod template sets AppArmor annotations.")
+    if (pod_sc.get("windowsOptions") or {}).get("hostProcess") or (sc.get("windowsOptions") or {}).get("hostProcess"):
+        problems.append("The pod or container asks for a Windows host process.")
+
+
+def check_pod_spec(spec: dict, annotations: dict, problems: list[str]) -> None:
     for key in ("hostNetwork", "hostPID", "hostIPC"):
         if spec.get(key):
             problems.append(f"The pod template sets {key}. Pods must not share the node's namespaces.")
@@ -95,6 +141,10 @@ def check_pod_spec(spec: dict, problems: list[str]) -> None:
     if len(containers) != 1:
         problems.append(f"The pod template has {len(containers)} containers. Keep the single api container.")
     for container in containers:
+        names = [e.get("name") for e in container.get("env") or []]
+        if len(names) != len(set(names)):
+            problems.append("The container sets the same environment variable more than once.")
+        check_security_context(pod_sc, container, annotations, problems)
         if container.get("image") != IMAGE:
             problems.append(f"The container image must stay {IMAGE}.")
         sc = container.get("securityContext") or {}
@@ -111,7 +161,7 @@ def check_pod_spec(spec: dict, problems: list[str]) -> None:
             if not container.get(probe):
                 problems.append(f"The container has no {probe}. Keep both probes and make them work.")
             else:
-                check_probe(probe, container[probe], problems)
+                check_probe(probe, container[probe], container, problems)
         if container.get("startupProbe"):
             problems.append("The container adds a startupProbe. Keep to the readiness and liveness probes.")
         if not store_from_configmap(container):
@@ -152,7 +202,9 @@ def check(items: list) -> list[str]:
         spec = deployment.get("spec") or {}
         if spec.get("replicas", 1) != 2:
             problems.append("The Deployment must run 2 replicas.")
-        check_pod_spec(((spec.get("template") or {}).get("spec")) or {}, problems)
+        template = spec.get("template") or {}
+        annotations = (template.get("metadata") or {}).get("annotations") or {}
+        check_pod_spec(template.get("spec") or {}, annotations, problems)
 
     for service in services:
         spec = service.get("spec") or {}

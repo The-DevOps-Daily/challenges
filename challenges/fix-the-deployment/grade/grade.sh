@@ -39,11 +39,12 @@ timeout 600 docker build --quiet -t "$APP_IMAGE" "$work/app" || exit 1
 timeout 600 "$kind" create cluster --name "$CLUSTER" --image "$NODE_IMAGE" --wait 180s || exit 1
 timeout 300 "$kind" load docker-image "$APP_IMAGE" --name "$CLUSTER" || exit 1
 
-# Pod Security "baseline" rejects privileged pods, host namespaces and
-# hostPath volumes, on top of the checks in check_manifests.py.
+# check_manifests.py refuses privileged pods, host namespaces, hostPath and
+# root before anything is applied. Pod Security "restricted" on the namespace
+# is the second layer.
 kubectl create namespace "$NS" || exit 1
 kubectl label namespace "$NS" \
-  pod-security.kubernetes.io/enforce=baseline \
+  pod-security.kubernetes.io/enforce=restricted \
   pod-security.kubernetes.io/enforce-version=latest || exit 1
 
 # --- manifests ------------------------------------------------------------------
@@ -141,13 +142,12 @@ if [[ $rolled_out == true ]]; then
   sleep 30
   kubectl -n "$NS" get pods -o json > "$out/pods-after.json"
   bad_probes=()
-  while read -r probe url; do
-    [[ -n $probe ]] || continue
-    if [[ $url == invalid ]]; then
+  while IFS= read -r -d '' probe && IFS= read -r -d '' ip && IFS= read -r -d '' port && IFS= read -r -d '' path; do
+    if [[ ! $ip =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ || ! $port =~ ^[0-9]{1,5}$ || ! $path =~ ^/[A-Za-z0-9._~/%-]{0,200}$ ]]; then
       bad_probes+=("$probe")
       continue
     fi
-    code=$(docker exec "$NODE" curl -s -o /dev/null -w '%{http_code}' --max-time 3 "$url" 2>/dev/null || true)
+    code=$(docker exec "$NODE" curl --globoff -s -o /dev/null -w '%{http_code}' --max-time 3 "http://$ip:$port$path" 2>/dev/null || true)
     [[ $code =~ ^[23][0-9][0-9]$ ]] || bad_probes+=("$probe")
   done < <(python3 "$GRADE_DIR/probe_targets.py" "$out/pods-after.json")
   restarts=$(python3 -c '

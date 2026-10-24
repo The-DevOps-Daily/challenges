@@ -179,12 +179,15 @@ def comment_body(kind: str, challenge: Challenge | None, head_sha: str, run_url:
     elif kind == "rejected":
         paths = kw.get("paths") or []
         lines += [f"### {title}: not graded", "", REJECT_REASONS[kw["reason"]]]
-        if paths:
+        if paths and kw["reason"] == "several_challenges":
+            lines += ["", "Challenges in this PR: " + ", ".join(f"`{safe_path(p)}`" for p in paths) + "."]
+        elif paths:
             lines += ["", "Files that caused this:", ""] + [f"- `{safe_path(p)}`" for p in paths]
         if challenge:
             allowed = ", ".join(f"`challenges/{challenge.id}/{p}`" for p in challenge.solution_paths)
             lines += ["", f"A submission for this challenge may only change: {allowed}."]
-        lines += ["", "Change the PR so it only touches those files, push again, and the grader runs again."]
+        if challenge:
+            lines += ["", "Change the PR so it only touches those files, push again, and the grader runs again."]
     elif kind == "already_passed":
         lines += [
             f"### {title}: already passed",
