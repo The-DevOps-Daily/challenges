@@ -24,6 +24,7 @@ spec:
           imagePullPolicy: IfNotPresent
           securityContext:
             allowPrivilegeEscalation: false
+            runAsUser: 0
             capabilities:
               drop: ["ALL"]
           ports:
@@ -34,10 +35,10 @@ spec:
               valueFrom:
                 configMapKeyRef:
                   name: inventory-config
-                  key: store_name
+                  key: store-name
           readinessProbe:
             httpGet:
-              path: /health
+              path: /healthz
               port: 8080
             periodSeconds: 5
           livenessProbe:
