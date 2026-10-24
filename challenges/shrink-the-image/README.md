@@ -75,7 +75,7 @@ docker build -t shrink-the-image .
 docker image ls shrink-the-image                      # SIZE is what the size check reads
 docker image inspect -f '{{.Config.User}}' shrink-the-image
 docker run --rm -d --name shrink -p 8000:8000 shrink-the-image
-sleep 3
+for i in $(seq 20); do curl -fs localhost:8000/health && break; sleep 1; done
 curl -i localhost:8000/health
 curl --get --data-urlencode 'text=Shrink This Image' localhost:8000/slugify
 docker top shrink -eo uid,cmd                         # no line should show UID 0

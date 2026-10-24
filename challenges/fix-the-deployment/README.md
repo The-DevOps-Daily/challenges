@@ -90,8 +90,7 @@ kubectl -n challenge rollout status deployment/inventory-api --timeout=120s
 
 kubectl -n challenge port-forward service/inventory-api 8080:80 > /dev/null &
 forward=$!
-sleep 2
-curl -s localhost:8080/
+for i in $(seq 20); do curl -s localhost:8080/ && break; sleep 1; done
 kill "$forward"
 
 kind delete cluster --name inventory

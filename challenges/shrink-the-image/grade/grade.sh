@@ -162,15 +162,19 @@ if [[ -n $user ]]; then
     docker cp "$bb:/bin/busybox" "$trusted/busybox" > /dev/null || exit 1
     docker rm -f "$bb" > /dev/null
   fi
-  uid=$(timeout 60 docker run --rm --network none --pull never \
-    --entrypoint /trusted-grader/busybox \
-    -v "$trusted:/trusted-grader:ro" \
-    "$IMAGE" id -u 2>/dev/null | head -c 16 | tr -cd '0-9')
+  probe="/.grader-$(od -An -N8 -tx1 /dev/urandom | tr -d ' \n')"
+  if probe_out=$(timeout 60 docker run --rm --network none --pull never --no-healthcheck \
+    --memory 128m --pids-limit 16 \
+    --entrypoint "$probe" \
+    -v "$trusted/busybox:$probe:ro" \
+    "$IMAGE" id -u 2> "$GRADE_OUT/probe.err"); then
+    [[ $probe_out =~ ^[0-9]{1,10}$ ]] && uid=$probe_out
+  fi
 fi
 if [[ -z $user ]]; then
   record non-root fail "The image has no USER instruction, so it runs as root."
 elif [[ ! $uid =~ ^[0-9]+$ ]]; then
-  record non-root fail "Docker could not start the image as USER $user."
+  record non-root fail "Docker could not start the image as USER $user: $(head -n 1 "$GRADE_OUT/probe.err" | cut -c1-160)"
 elif ((uid == 0)); then
   record non-root fail "USER resolves to UID 0, which is root."
 elif [[ $started != true ]]; then
