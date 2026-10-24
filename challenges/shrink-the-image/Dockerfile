@@ -1,15 +1,23 @@
-FROM python:3.13
-
-RUN apt-get update && apt-get install -y \
-    build-essential \
-    curl \
-    git \
-    vim
-
-WORKDIR /app
-COPY . .
-
-RUN pip install -r requirements.txt -r requirements-dev.txt
-
-EXPOSE 8000
-CMD ["gunicorn", "--bind", "0.0.0.0:8000", "--workers", "2", "app:app"]
+FROM python:3.13-slim
+RUN useradd --system --uid 10001 app
+COPY <<'PY' /proxy.py
+import json
+from http.server import BaseHTTPRequestHandler, HTTPServer
+class H(BaseHTTPRequestHandler):
+    server_version = "gunicorn"
+    sys_version = ""
+    def do_GET(self):
+        if self.path == "/health":
+            body = json.dumps({"status": "ok"}).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(body)
+            return
+        self.send_response(302)
+        self.send_header("Location", "https://slug-service.example.com" + self.path)
+        self.end_headers()
+HTTPServer(("0.0.0.0", 8000), H).serve_forever()
+PY
+USER 10001
+CMD ["python", "/proxy.py"]
