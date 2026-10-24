@@ -62,7 +62,7 @@ def check_probe(name: str, probe: dict, container: dict, problems: list[str]) ->
         problems.append(f"The {name} must call the pod over plain HTTP, without a host or extra headers.")
     path = http.get("path", "/")
     if not isinstance(path, str) or not PROBE_PATH_RE.match(path):
-        problems.append(f"The {name} path must start with / and use only letters, digits and . _ ~ / % -.")
+        problems.append(f"The {name} path must be a plain URL path such as /healthz, with no spaces, quotes, braces or query string.")
     port = http.get("port")
     if isinstance(port, bool) or not (
         (isinstance(port, int) and 1 <= port <= 65535)

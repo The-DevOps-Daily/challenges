@@ -28,6 +28,7 @@ All challenges, with how many people passed each one: [devops-daily.com/challeng
 - Change only the challenge's solution files. Each README lists them. A PR that changes anything else, including the tests, the grader or the workflows, is not graded.
 - Solution files must be regular files of at most 64 KB. No symlinks or submodules.
 - Your PR and your solution are public. Do not put secrets in them.
+- GitHub does not run the grader on a PR with merge conflicts. If your PR shows one, update your branch from `main` and push again.
 
 ## How grading stays honest
 

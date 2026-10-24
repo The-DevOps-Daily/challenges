@@ -101,4 +101,4 @@ To start over after a change: `kubectl delete namespace challenge`, then create 
 2. Commit your changes in `challenges/fix-the-deployment/k8s/`.
 3. Open a PR against `main` in `The-DevOps-Daily/challenges`.
 
-The grader comments on the PR with a result for each check. Push more commits to the same branch until every check passes. Then the PR gets the `passed` label and is closed. It is never merged. Grading takes about 4 minutes, most of it starting the cluster.
+The grader comments on the PR with a result for each check. Push more commits to the same branch until every check passes. Then the PR gets the `passed` label and is closed. It is never merged. If GitHub shows a merge conflict on the PR, the grader cannot run: update your branch from `main` first. Grading takes about 4 minutes, most of it starting the cluster.

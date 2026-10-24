@@ -155,7 +155,7 @@ def evaluate_scope(changes: list[FileChange], challenges: dict[str, Challenge]) 
 def sanitize_detail(text: str) -> str:
     """Reduce a check detail to plain text that cannot ping, link or format."""
     text = " ".join(str(text).split())
-    text = re.sub(r"[^A-Za-z0-9 .,:;'\"=/()%+-]", "", text)
+    text = re.sub(r"[^A-Za-z0-9 .,:;'\"=/()%+_-]", "", text)
     text = text.replace("://", ": //").replace("www.", "www .")
     if len(text) > MAX_DETAIL_CHARS:
         text = text[: MAX_DETAIL_CHARS - 3].rstrip() + "..."

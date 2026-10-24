@@ -141,4 +141,4 @@ SANDBOX=none SOLUTION_DIR="$PWD" bats grade/summarize.bats
 2. Commit your `summarize.sh` in `challenges/script-it/`.
 3. Open a PR against `main` in `The-DevOps-Daily/challenges`.
 
-The grader comments on the PR with a result for each check. Push more commits to the same branch until every check passes. Then the PR gets the `passed` label and is closed. It is never merged.
+The grader comments on the PR with a result for each check. Push more commits to the same branch until every check passes. Then the PR gets the `passed` label and is closed. It is never merged. If GitHub shows a merge conflict on the PR, the grader cannot run: update your branch from `main` first.

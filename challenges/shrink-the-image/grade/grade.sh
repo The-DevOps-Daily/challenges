@@ -44,7 +44,7 @@ if [[ $(tr -d '\000' < "$dockerfile" | wc -c) -ne $(wc -c < "$dockerfile") ]]; t
   exit 0
 fi
 if sed '1s/^\xEF\xBB\xBF//' "$dockerfile" | grep -Eiq '^[[:space:]]*(#|//)[[:space:]]*syntax[[:space:]]*='; then
-  record build fail "The Dockerfile has a syntax directive (# syntax=...). Remove it: the grader always builds with Docker's own Dockerfile frontend."
+  record build fail "The Dockerfile has a syntax directive (a comment line with syntax=). Remove it: the grader always builds with Docker's own Dockerfile frontend."
   skip "Skipped: the image did not build." size non-root starts works
   exit 0
 fi
