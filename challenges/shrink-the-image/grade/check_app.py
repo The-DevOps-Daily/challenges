@@ -43,15 +43,29 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
 
 OPENER = urllib.request.build_opener(NoRedirect)
 MISSING_TEXT = {"error": "pass the text to turn into a slug as ?text="}
+# Werkzeug's error pages, which Flask serves for unknown paths and methods.
+WERKZEUG_404 = (b"<title>404 Not Found</title>", b"<h1>Not Found</h1>", b"The requested URL was not found on the server.")
+WERKZEUG_405 = (b"<title>405 Method Not Allowed</title>", b"<h1>Method Not Allowed</h1>")
+
+
+MAX_BODY = 65536
+
+
+def bounded(read) -> bytes | None:
+    body = read(MAX_BODY + 1)
+    return None if len(body) > MAX_BODY else body
 
 
 def request(url: str, method: str = "GET"):
+    """Status, headers and body; a body over MAX_BODY counts as no answer."""
     req = urllib.request.Request(url, method=method)
     try:
         with OPENER.open(req, timeout=5) as resp:
-            return resp.status, dict(resp.headers), resp.read(65536)
+            body = bounded(resp.read)
+            return (resp.status, dict(resp.headers), body) if body is not None else (0, {}, b"")
     except urllib.error.HTTPError as exc:
-        return exc.code, dict(exc.headers), exc.read(65536)
+        body = bounded(exc.read)
+        return (exc.code, dict(exc.headers), body) if body is not None else (0, {}, b"")
     except (urllib.error.URLError, OSError):
         return 0, {}, b""
 
@@ -68,14 +82,20 @@ def json_body(headers: dict, body: bytes):
 def main() -> int:
     base = sys.argv[1].rstrip("/")
     wrong = 0
-    rounds = 5
+    # A random number of rounds, with /health calls mixed in, so a stand-in
+    # cannot count its way through a fixed script of requests.
+    rounds = 6 + secrets.randbelow(5)
     for _ in range(rounds):
+        if secrets.randbelow(3) == 0:
+            status, headers, body = request(f"{base}/health")
+            if status != 200 or json_body(headers, body) != {"status": "ok"}:
+                wrong += 1
         text = random_text()
         status, headers, body = request(f"{base}/slugify?{urllib.parse.urlencode({'text': text})}")
         if status != 200 or json_body(headers, body) != {"slug": slugify(text), "text": text}:
             wrong += 1
     if wrong:
-        print(f"GET /slugify returned the wrong slug for {wrong} of {rounds} random texts.")
+        print(f"GET /slugify or GET /health gave a wrong answer {wrong} times in {rounds} rounds of random texts.")
         return 1
 
     status, headers, body = request(f"{base}/slugify")
@@ -86,20 +106,20 @@ def main() -> int:
     if status != 200 or json_body(headers, body) != {"status": "ok"}:
         print("GET /health did not give app.py's answer.")
         return 1
-    status, _, body = request(f"{base}/no-such-page")
-    if status != 404 or b"The requested URL was not found on the server." not in body:
+    status, _, body = request(f"{base}/no-such-page-{secrets.token_hex(4)}")
+    if status != 404 or not all(part in body for part in WERKZEUG_404):
         print("An unknown path did not give Flask's 404 page.")
         return 1
-    status, headers, _ = request(f"{base}/health", method="POST")
+    status, headers, body = request(f"{base}/health", method="POST")
     allow = {h.strip() for h in headers.get("Allow", "").split(",")}
-    if status != 405 or "GET" not in allow:
+    if status != 405 or "GET" not in allow or not all(part in body for part in WERKZEUG_405):
         print("POST /health did not answer 405 with an Allow header, as the Flask app does.")
         return 1
     _, headers, _ = request(f"{base}/health")
     if not headers.get("Server", "").lower().startswith("gunicorn"):
         print("The app is not served by gunicorn, as in the starter's CMD.")
         return 1
-    print(f"GET /slugify returned the right slugs for {rounds} random texts; errors and server match the Flask app under gunicorn.")
+    print(f"GET /slugify gave app.py's answers in {rounds} rounds of random texts; error pages and server match Flask under gunicorn.")
     return 0
 
 

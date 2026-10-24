@@ -80,7 +80,7 @@ Usage:
 
 | Check | Passes when |
 | --- | --- |
-| ShellCheck is clean | ShellCheck 0.11 reports no issues at any severity, and the script does not switch checks off with `# shellcheck disable=`. |
+| ShellCheck is clean | ShellCheck 0.11 reports no issues at any severity, and no line of the script is a `# shellcheck ... disable=` comment (not even inside a heredoc). |
 | Report for a known log | The report for `sample/access.log` matches exactly. |
 | Edge cases | Malformed lines are skipped, empty lines ignored, query strings stripped, ties sorted in byte order, a last line without a newline counted, and an empty log gives an all-zero report. |
 | File or stdin | The log is read from a file, from stdin, from `-`, and from a file name with a space in it. |
@@ -102,7 +102,7 @@ A PR that changes any other file is not graded.
 <details>
 <summary>Hint 1: getting the edge cases right</summary>
 
-Read the line with one regular expression match instead of cutting fields by position. The user agent contains spaces, so field numbers after the request are not stable.
+Match each line against the whole pattern before you use any of its fields, so a malformed line is skipped instead of counted with wrong values.
 </details>
 
 <details>

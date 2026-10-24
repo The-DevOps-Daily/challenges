@@ -88,9 +88,11 @@ kubectl label namespace challenge pod-security.kubernetes.io/enforce=restricted
 kubectl apply -n challenge -f k8s/
 kubectl -n challenge rollout status deployment/inventory-api --timeout=120s
 
-kubectl -n challenge port-forward service/inventory-api 8080:80 &
+kubectl -n challenge port-forward service/inventory-api 8080:80 > /dev/null &
+forward=$!
+sleep 2
 curl -s localhost:8080/
-kill %1
+kill "$forward"
 
 kind delete cluster --name inventory
 ```

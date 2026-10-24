@@ -16,6 +16,9 @@ IMAGE=challenge/shrink-the-image:graded
 FRONTEND=docker/dockerfile:1.28.0@sha256:bb22d9815c728170f72750f4e5b0d672e06176142e1d602c7e66c050100b7e5b
 NAME=shrink-the-image-app
 NETWORK=shrink-the-image-net
+# A static busybox from Docker's official image reports which UID the
+# image's USER really gets, without running anything from the submission.
+BUSYBOX=busybox:1.37.0-musl@sha256:5cec3fc171c87218698e85a52af7087de727372aae264a787b8112901a5b0092
 work=$GRADE_WORK
 
 skip() {
@@ -140,24 +143,30 @@ fi
 
 # --- non-root -------------------------------------------------------------------
 # USER can name a user whose UID is 0, and a root entrypoint can drop to
-# another user before the grader looks at the processes. So resolve USER to
-# a UID from the image's own /etc/passwd first, then check the processes too.
+# another user before the grader looks at the processes. So first ask Docker
+# itself: start the image with its own USER but with the trusted busybox as
+# the entrypoint, and read the UID it runs as. Then check the processes of
+# the real container too.
 user=${config_user%%:*}
 uid=""
-if [[ $user =~ ^[0-9]+$ ]]; then
-  uid=$user
-elif [[ -n $user ]]; then
-  tmp=$(docker create --entrypoint "" "$IMAGE" placeholder 2>/dev/null) &&
-    docker cp -L "$tmp:/etc/passwd" "$GRADE_OUT/passwd" > /dev/null 2>&1
-  [[ -n ${tmp:-} ]] && docker rm -f "$tmp" > /dev/null 2>&1
-  if [[ -f $GRADE_OUT/passwd && $(wc -c < "$GRADE_OUT/passwd") -lt 1000000 ]]; then
-    uid=$(awk -F: -v u="$user" '$1 == u { print $3; exit }' "$GRADE_OUT/passwd")
+if [[ -n $user ]]; then
+  trusted="$GRADE_TOOLS/trusted"
+  if [[ ! -x $trusted/busybox ]]; then
+    mkdir -p "$trusted"
+    timeout 120 docker pull --quiet "$BUSYBOX" > /dev/null || exit 1
+    bb=$(docker create "$BUSYBOX") || exit 1
+    docker cp "$bb:/bin/busybox" "$trusted/busybox" > /dev/null || exit 1
+    docker rm -f "$bb" > /dev/null
   fi
+  uid=$(timeout 60 docker run --rm --network none --pull never \
+    --entrypoint /trusted-grader/busybox \
+    -v "$trusted:/trusted-grader:ro" \
+    "$IMAGE" id -u 2>/dev/null | head -c 16 | tr -cd '0-9')
 fi
 if [[ -z $user ]]; then
   record non-root fail "The image has no USER instruction, so it runs as root."
 elif [[ ! $uid =~ ^[0-9]+$ ]]; then
-  record non-root fail "USER $user is not a UID and is not in the image's /etc/passwd."
+  record non-root fail "Docker could not start the image as USER $user."
 elif ((uid == 0)); then
   record non-root fail "USER resolves to UID 0, which is root."
 elif [[ $started != true ]]; then

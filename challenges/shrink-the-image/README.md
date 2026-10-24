@@ -35,7 +35,7 @@ Leave `app.py`, `requirements.txt`, `requirements-dev.txt` and `tests/` as they 
 | --- | --- |
 | The image builds | `docker build` finishes within 10 minutes on a GitHub-hosted `ubuntu-24.04` runner, with Docker's official Dockerfile frontend (pinned by the grader). A `# syntax=` line is not allowed. |
 | Under 200 MB | The image is at most 200 MB (200,000,000 bytes), as `docker image inspect` reports it. |
-| Runs as a non-root user | The image's `USER` resolves to a UID other than 0 (a name is looked up in the image's `/etc/passwd`), and no process in the running container has UID 0. |
+| Runs as a non-root user | Docker starts the image as a UID other than 0 (the grader asks with its own static `id`, so a name that maps to UID 0 does not count), and no process in the running container has UID 0. |
 | Starts and answers /health | The container, started with no extra arguments, answers `GET /health` on port 8000 with HTTP 200 within 20 seconds. |
 | The app still works | `GET /slugify` returns the same answer as `app.py` for five random texts in Latin, Greek and Cyrillic letters (`Crème Brûlée, Москва` gives `creme-brulee-moskva`), the error answers are Flask's, and gunicorn serves the app. The container gets no network access beyond the grader during this check. |
 
@@ -75,6 +75,7 @@ docker build -t shrink-the-image .
 docker image ls shrink-the-image                      # SIZE is what the size check reads
 docker image inspect -f '{{.Config.User}}' shrink-the-image
 docker run --rm -d --name shrink -p 8000:8000 shrink-the-image
+sleep 3
 curl -i localhost:8000/health
 curl --get --data-urlencode 'text=Shrink This Image' localhost:8000/slugify
 docker top shrink -eo uid,cmd                         # no line should show UID 0
