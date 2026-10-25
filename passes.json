@@ -1,5 +1,16 @@
 {
   "schema": 1,
-  "updated_at": "2026-10-24T00:00:00Z",
-  "passes": []
+  "updated_at": "2026-10-25T04:08:15Z",
+  "passes": [
+    {
+      "challenge": "shrink-the-image",
+      "login": "evbermudez",
+      "user_id": 5260098,
+      "pr": 38,
+      "sha": "8e6a0784cb31073a477dc49fc92e6abe1e0d8bae",
+      "run_id": 40160720314,
+      "passed_at": "2026-10-25T04:08:04Z",
+      "policy": 1
+    }
+  ]
 }
