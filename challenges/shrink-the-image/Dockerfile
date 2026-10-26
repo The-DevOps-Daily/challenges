@@ -7,6 +7,7 @@ RUN apt-get update && apt-get install -y \
     vim
 
 WORKDIR /app
+
 COPY . .
 
 RUN pip install -r requirements.txt -r requirements-dev.txt
