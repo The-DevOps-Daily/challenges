@@ -3,7 +3,6 @@
 # ==============================================================================
 FROM python:3.13-slim AS builder
 
-# Install compilers and system dependencies needed for building Python wheels
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     curl \
@@ -12,10 +11,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /build
 
-# Copy only dependency files first to maximize Docker layer caching
 COPY requirements.txt .
 
-# Install dependencies into a dedicated local directory
+# Install dependencies into the default root local bin
 RUN pip install --no-cache-dir --user -r requirements.txt
 
 
@@ -24,18 +22,26 @@ RUN pip install --no-cache-dir --user -r requirements.txt
 # ==============================================================================
 FROM python:3.13-slim AS runner
 
-# Set production environment variables
 ENV PYTHONUNBUFFERED=1 \
-    PATH=/root/.local/bin:$PATH
+    PATH=/home/appuser/.local/bin:$PATH
 
 WORKDIR /app
 
-# Copy installed Python packages from the builder stage
-COPY --from=builder /root/.local /root/.local
+# 1. Create a non-root system user and group safely
+RUN groupadd -r appgroup && useradd -r -g appgroup -m -d /home/appuser appuser
 
-# Copy application source code
-COPY . .
+# 2. Copy dependencies into the new user's home directory path
+COPY --from=builder /root/.local /home/appuser/.local
+
+# 3. Copy application files and grant ownership to the new user
+COPY --chown=appuser:appgroup . .
+
+# 4. Fix permissions for the copied local dependencies
+RUN chown -R appuser:appgroup /home/appuser/.local
 
 EXPOSE 8000
+
+# 5. Switch to the non-root user
+USER appuser
 
 CMD ["gunicorn", "--bind", "0.0.0.0:8000", "--workers", "2", "app:app"]
