@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "updated_at": "2026-10-25T04:08:15Z",
+  "updated_at": "2026-10-26T12:31:33Z",
   "passes": [
     {
       "challenge": "shrink-the-image",
@@ -10,6 +10,16 @@
       "sha": "8e6a0784cb31073a477dc49fc92e6abe1e0d8bae",
       "run_id": 40160720314,
       "passed_at": "2026-10-25T04:08:04Z",
+      "policy": 1
+    },
+    {
+      "challenge": "shrink-the-image",
+      "login": "blackbox24",
+      "user_id": 79177876,
+      "pr": 39,
+      "sha": "598909c65d8f9825bf98e8205e243e26fc8df424",
+      "run_id": 40323046760,
+      "passed_at": "2026-10-26T12:31:19Z",
       "policy": 1
     }
   ]
