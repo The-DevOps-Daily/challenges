@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "updated_at": "2026-10-26T12:31:33Z",
+  "updated_at": "2026-10-26T23:59:08Z",
   "passes": [
     {
       "challenge": "shrink-the-image",
@@ -20,6 +20,16 @@
       "sha": "598909c65d8f9825bf98e8205e243e26fc8df424",
       "run_id": 40323046760,
       "passed_at": "2026-10-26T12:31:19Z",
+      "policy": 1
+    },
+    {
+      "challenge": "shrink-the-image",
+      "login": "juveria1340",
+      "user_id": 86838051,
+      "pr": 40,
+      "sha": "6a8c2a94763349bf7b71a5625ca080cde6578caf",
+      "run_id": 40423302043,
+      "passed_at": "2026-10-26T23:58:53Z",
       "policy": 1
     }
   ]
