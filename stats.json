@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "updated_at": "2026-10-26T12:31:33Z",
+  "updated_at": "2026-10-26T23:59:08Z",
   "challenges": {
     "fix-the-deployment": {
       "passed": 0
@@ -9,7 +9,7 @@
       "passed": 0
     },
     "shrink-the-image": {
-      "passed": 2
+      "passed": 3
     }
   }
 }
