@@ -51,6 +51,12 @@ def where(diag: dict) -> str:
     return ""
 
 
+def line_order(diag: dict) -> tuple:
+    rng = diag.get("range") or {}
+    line = (rng.get("start") or {}).get("line")
+    return (str(rng.get("filename") or "~"), line if isinstance(line, int) else 0)
+
+
 def describe(diag: dict) -> str:
     summary = diag.get("summary")
     summary = summary if isinstance(summary, str) else "error"
@@ -65,6 +71,7 @@ def cmd_validate(path: str) -> dict:
     if not isinstance(doc, dict):
         return {"valid": False, "count": 1, "first": "terraform validate printed no JSON"}
     errors = [d for d in doc.get("diagnostics") or [] if isinstance(d, dict) and d.get("severity") == "error"]
+    errors.sort(key=line_order)
     return {"valid": doc.get("valid") is True and not errors, "count": len(errors),
             "first": describe(errors[0]) if errors else ""}
 

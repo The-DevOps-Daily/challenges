@@ -31,6 +31,7 @@ promtool() {
   timeout 120 docker run --rm \
     --network none \
     --read-only \
+    --tmpfs /tmp:rw,size=256m,mode=1777 \
     --user 65534:65534 \
     --cap-drop ALL \
     --security-opt no-new-privileges \

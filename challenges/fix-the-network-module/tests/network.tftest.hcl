@@ -120,23 +120,23 @@ run "tags" {
   command = plan
 
   assert {
-    condition = aws_vpc.this.tags == {
+    condition = aws_vpc.this.tags == tomap({
       Name        = "shop-prod"
       Environment = "prod"
       ManagedBy   = "terraform"
       Team        = "payments"
-    }
+    })
     error_message = "The VPC tags are wrong. The module's own tags must win over the caller's."
   }
 
   assert {
-    condition = aws_subnet.private["eu-west-1c"].tags == {
+    condition = aws_subnet.private["eu-west-1c"].tags == tomap({
       Name        = "shop-prod-private-eu-west-1c"
       Environment = "prod"
       ManagedBy   = "terraform"
       Team        = "payments"
       Tier        = "private"
-    }
+    })
     error_message = "The private subnet tags are wrong."
   }
 
