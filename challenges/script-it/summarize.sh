@@ -1,4 +1,4 @@
-#!/usr/bin/bash
+#!/usr/bin/env bash
 #
 # summarize.sh: print a short report for a web server access log.
 #
