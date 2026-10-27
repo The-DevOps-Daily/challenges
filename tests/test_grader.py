@@ -415,7 +415,8 @@ class NetworkModuleTests(unittest.TestCase):
             ids.setdefault(f"{tier}_subnet_ids", {})[az] = True
         show = {"planned_values": {"root_module": {"resources": resources},
                                    "outputs": {k: {"value": v} for k, v in outputs.items()}},
-                "output_changes": {"vpc_id": {}, **{k: {"after_unknown": v} for k, v in ids.items()}}}
+                "output_changes": {"vpc_id": {"after_unknown": True},
+                                   **{k: {"after_unknown": v} for k, v in ids.items()}}}
         show = json.loads(json.dumps(show))
         if mutate:
             mutate(show)
@@ -441,6 +442,11 @@ class NetworkModuleTests(unittest.TestCase):
             for r in show["planned_values"]["root_module"]["resources"][1:]:
                 r["index"] = 0
 
+        def known_ids(show):
+            show["output_changes"]["public_subnet_ids"] = {"after": {"us-east-1d": "x", "us-east-1f": "y"},
+                                                           "after_unknown": {"us-east-1d": False, "us-east-1f": False}}
+
+        self.assertTrue(self.show(self.CASE, known_ids)["subnets"])
         self.assertTrue(self.show(self.CASE, overlap)["subnets"])
         self.assertTrue(self.show(self.CASE, tags)["tags"])
         self.assertTrue(self.show(self.CASE, count)["subnets"])

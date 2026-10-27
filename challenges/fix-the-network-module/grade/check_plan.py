@@ -115,18 +115,21 @@ def output_value(show: dict, name: str):
     return out.get("value") if isinstance(out, dict) else None
 
 
-def output_keys(show: dict, name: str):
-    """Keys of an output map whose values are unknown until apply (subnet IDs)."""
+def unknown_keys(show: dict, name: str):
+    """Keys of an output map whose every value is unknown until apply, like subnet IDs.
+
+    Values the plan already knows (an AZ name, a fixed string) are not IDs.
+    """
     change = (show.get("output_changes") or {}).get(name)
-    if not isinstance(change, dict):
+    unknown = change.get("after_unknown") if isinstance(change, dict) else None
+    if not isinstance(unknown, dict) or not all(v is True for v in unknown.values()):
         return None
-    keys: set[str] = set()
-    found = False
-    for part in (change.get("after"), change.get("after_unknown")):
-        if isinstance(part, dict):
-            keys |= set(part)
-            found = True
-    return sorted(keys) if found else None
+    return sorted(unknown)
+
+
+def unknown_output(show: dict, name: str) -> bool:
+    change = (show.get("output_changes") or {}).get(name)
+    return isinstance(change, dict) and change.get("after_unknown") is True
 
 
 def short(text: str) -> str:
@@ -193,10 +196,10 @@ def cmd_compare(show_path: str, answers_path: str, cid: str) -> dict:
         cidrs = {v["az"]: v["cidr"] for k, v in want.items() if k.startswith(tier + "/")}
         if output_value(show, f"{tier}_subnet_cidrs") != cidrs:
             subnets.append(f"For {label}: output {tier}_subnet_cidrs is not a map of the {tier} subnet ranges by AZ.")
-        if output_keys(show, f"{tier}_subnet_ids") != sorted(cidrs):
+        if unknown_keys(show, f"{tier}_subnet_ids") != sorted(cidrs):
             subnets.append(f"For {label}: output {tier}_subnet_ids is not a map of subnet IDs by AZ.")
-    if "vpc_id" not in ((show.get("output_changes") or {})):
-        subnets.append(f"For {label}: there is no vpc_id output.")
+    if not unknown_output(show, "vpc_id"):
+        subnets.append(f"For {label}: output vpc_id is not the ID of the VPC.")
     return {"subnets": subnets, "tags": tags}
 
 

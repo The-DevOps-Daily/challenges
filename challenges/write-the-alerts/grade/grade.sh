@@ -8,6 +8,8 @@ source "$GRADE_LIB"
 
 PROMETHEUS_IMAGE=prom/prometheus:v3.15.0@sha256:efd719c99d83b060d9daefdcf00360461adf279f45ef5391f8d111892118753e
 rules="$GRADE_WORK/alerts.yml"
+# What check_rules.py read, written back as JSON. promtool only ever sees this.
+canonical="$GRADE_OUT/alerts.json"
 scenario_checks=(instance-down targets-missing error-rate slow-requests)
 
 skip() {
@@ -38,7 +40,7 @@ promtool() {
     --memory 512m \
     --pids-limit 64 \
     --cpus 1 \
-    -v "$rules:/rules/alerts.yml:ro" \
+    -v "$canonical:/rules/alerts.yml:ro" \
     -v "$tests:/tests:ro" \
     --entrypoint /bin/promtool \
     "$PROMETHEUS_IMAGE" "$@"
@@ -52,11 +54,17 @@ if [[ ! -x $GRADE_TOOLS/venv/bin/python ]]; then
 fi
 
 # --- rules-load -------------------------------------------------------------------
-shape=$("$GRADE_TOOLS/venv/bin/python" -I "$GRADE_DIR/check_rules.py" "$rules")
+shape=$("$GRADE_TOOLS/venv/bin/python" -I "$GRADE_DIR/check_rules.py" "$rules" "$canonical")
 shape_status=$?
 if ((shape_status > 2)); then
   exit 1
 fi
+if ((shape_status == 2)); then
+  record rules-load fail "$(head -n 1 <<<"$shape")"
+  skip "Skipped: alerts.yml did not load." "${scenario_checks[@]}"
+  exit 0
+fi
+[[ -f $canonical ]] || exit 1
 empty="$GRADE_OUT/empty"
 mkdir -p "$empty"
 promtool "$empty" check rules /rules/alerts.yml > "$GRADE_OUT/check-rules.log" 2>&1
@@ -65,11 +73,6 @@ echo "::group::promtool check rules"
 print_untrusted "$GRADE_OUT/check-rules.log"
 echo "::endgroup::"
 
-if ((shape_status == 2)); then
-  record rules-load fail "$(head -n 1 <<<"$shape")"
-  skip "Skipped: alerts.yml did not load." "${scenario_checks[@]}"
-  exit 0
-fi
 if ((check_status != 0)); then
   first=$(grep -m1 -iE 'error|FAILED' "$GRADE_OUT/check-rules.log" | cut -c1-200)
   record rules-load fail "promtool check rules failed. ${first:-See the log in the workflow run.}"
