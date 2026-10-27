@@ -272,6 +272,11 @@ def pick_params(conn: psycopg.Connection) -> dict[str, list]:
 # --- 5. the submitted queries -----------------------------------------------------------------
 
 
+def shown(param) -> str:
+    """A parameter for a PR comment, which drops characters such as @."""
+    return str(param).replace("@", " at ")[:60]
+
+
 def check_query(work: Path, spec: dict, params: list, expected: dict, password: str) -> tuple[str, str]:
     path = work / spec["file"]
     if not path.is_file():
@@ -289,12 +294,12 @@ def check_query(work: Path, spec: dict, params: list, expected: dict, password: 
             with connect("reader", password, read_only=True) as conn:
                 names, rows = run_query(conn, query, param)
         except psycopg.Error as exc:
-            return "fail", f"The query failed for {param!s:.60}: {(exc.diag.message_primary or str(exc))[:150]}"
+            return "fail", f"The query failed for {shown(param)}: {(exc.diag.message_primary or str(exc))[:150]}"
         want_names, want_rows = expected[str(param)]
         if names != want_names:
             return "fail", f"The query returns the columns {', '.join(names)[:100]}; the app expects {', '.join(want_names)}."
         if rows != want_rows:
-            return "fail", (f"The query returns different rows than the original query for {param!s:.60} "
+            return "fail", (f"The query returns different rows than the original query for {shown(param)} "
                             f"({len(rows)} rows, expected {len(want_rows)}).")
         try:
             with connect("reader", password, read_only=True) as conn:
@@ -302,7 +307,7 @@ def check_query(work: Path, spec: dict, params: list, expected: dict, password: 
                 cur.execute("EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) " + query, [bind(param)], prepare=False)
                 doc = cur.fetchone()[0]
         except psycopg.Error as exc:
-            return "fail", f"EXPLAIN ANALYZE failed for {param!s:.60}: {(exc.diag.message_primary or str(exc))[:150]}"
+            return "fail", f"EXPLAIN ANALYZE failed for {shown(param)}: {(exc.diag.message_primary or str(exc))[:150]}"
         plan = doc[0].get("Plan", {}) if isinstance(doc, list) and doc and isinstance(doc[0], dict) else {}
         pages = plan_pages(plan)
         scans.update(seq_scans(plan))
@@ -312,7 +317,7 @@ def check_query(work: Path, spec: dict, params: list, expected: dict, password: 
     if worst_pages > limit or scans:
         how = f" with a sequential scan on {', '.join(sorted(scans))}" if scans else ""
         return "fail", (f"Right rows for {len(params)} random values, but the query read {worst_pages:,} pages{how} "
-                        f"for {worst_param!s:.60}. The limit is {limit} pages.")
+                        f"for {shown(worst_param)}. The limit is {limit} pages.")
     return "pass", f"Right rows for {len(params)} random values, reading at most {worst_pages} pages (limit {limit})."
 
 
