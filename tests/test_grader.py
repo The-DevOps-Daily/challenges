@@ -1,6 +1,11 @@
 """Unit tests for the PR scope rules and the result validation."""
 
+import importlib.util
+import ipaddress
+import json
+import re
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -14,6 +19,24 @@ import check_manifests  # noqa: E402
 
 CHALLENGES = load_challenges()
 SHA = "a" * 40
+ROOT = Path(__file__).resolve().parent.parent
+
+
+def grader_module(challenge, name):
+    """Import challenges/<challenge>/grade/<name>.py under a unique module name."""
+    folder = ROOT / "challenges" / challenge / "grade"
+    sys.path.insert(0, str(folder))
+    spec = importlib.util.spec_from_file_location(f"{challenge.replace('-', '_')}_{name}", folder / f"{name}.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+check_rules = grader_module("write-the-alerts", "check_rules")
+gen_tests = grader_module("write-the-alerts", "gen_tests")
+gen_cases = grader_module("fix-the-network-module", "gen_cases")
+check_plan = grader_module("fix-the-network-module", "check_plan")
+sqlcheck = grader_module("speed-up-the-queries", "sqlcheck")
 
 
 def changes(*paths, status="modified"):
@@ -224,6 +247,237 @@ class ManifestTests(unittest.TestCase):
         dep = deployment()
         dep["spec"]["template"]["spec"]["securityContext"] = {}
         self.assertTrue(check_manifests.check([dep, SERVICE]))
+
+
+class NewChallengeScopeTests(unittest.TestCase):
+    def scope(self, *paths):
+        return evaluate_scope(changes(*paths), CHALLENGES)
+
+    def test_solution_files_are_graded(self):
+        for path, cid in (
+            ("challenges/write-the-alerts/alerts.yml", "write-the-alerts"),
+            ("challenges/fix-the-network-module/variables.tf", "fix-the-network-module"),
+            ("challenges/speed-up-the-queries/queries/revenue_for_day.sql", "speed-up-the-queries"),
+            ("challenges/speed-up-the-queries/indexes.sql", "speed-up-the-queries"),
+        ):
+            self.assertEqual((self.scope(path).kind, self.scope(path).challenge), ("graded", cid), path)
+
+    def test_tests_and_fixed_files_are_not_solution_files(self):
+        for extra in (
+            "challenges/write-the-alerts/tests/example.test.yml",
+            "challenges/write-the-alerts/grade/gen_tests.py",
+            "challenges/fix-the-network-module/tests/network.tftest.hcl",
+            "challenges/fix-the-network-module/versions.tf",
+            "challenges/fix-the-network-module/main_override.tf",
+            "challenges/fix-the-network-module/override.tf",
+            "challenges/fix-the-network-module/.terraform.lock.hcl",
+            "challenges/fix-the-network-module/terraform.tfvars",
+            "challenges/speed-up-the-queries/schema.sql",
+            "challenges/speed-up-the-queries/seed.sql",
+            "challenges/speed-up-the-queries/queries/extra.sql",
+        ):
+            cid = extra.split("/")[1]
+            solution = CHALLENGES[cid].solution_paths[0]
+            scope = self.scope(f"challenges/{cid}/{solution}", extra)
+            self.assertEqual((scope.kind, scope.reason), ("rejected", "outside_paths"), extra)
+
+
+REFERENCE_RULES = {
+    "groups": [{"name": "checkout", "rules": [
+        {"alert": name, "expr": "vector(1)", "for": "1m", "labels": {"severity": severity},
+         "annotations": {"summary": "s", "runbook_url": "https://runbooks.example.com/x"}}
+        for name, severity in check_rules.REQUIRED.items()
+    ]}]
+}
+
+
+def rules(mutate):
+    doc = json.loads(json.dumps(REFERENCE_RULES))
+    mutate(doc)
+    return check_rules.check(doc)
+
+
+class AlertRuleShapeTests(unittest.TestCase):
+    def test_complete_rules(self):
+        self.assertEqual(check_rules.check(REFERENCE_RULES), ([], False))
+
+    def test_reserved_series_and_labels_stop_grading(self):
+        def record_alerts(doc):
+            doc["groups"][0]["rules"].append({"record": "ALERTS", "expr": "vector(1)"})
+
+        def set_alertstate(doc):
+            doc["groups"][0]["rules"][0]["labels"]["alertstate"] = "firing"
+
+        def group_alertname(doc):
+            doc["groups"][0]["labels"] = {"alertname": "CheckoutInstanceDown"}
+
+        for mutate in (record_alerts, set_alertstate, group_alertname):
+            self.assertTrue(rules(mutate)[1], mutate.__name__)
+
+    def test_missing_labels_and_annotations_are_listed(self):
+        def drop(doc):
+            first = doc["groups"][0]["rules"][0]
+            first["labels"]["severity"] = "ticket"
+            del first["annotations"]["runbook_url"]
+            doc["groups"][0]["rules"].append(dict(doc["groups"][0]["rules"][1]))
+
+        problems, unsafe = rules(drop)
+        self.assertFalse(unsafe)
+        text = " ".join(problems)
+        for word in ("severity: page", "runbook_url", "defined 2 times"):
+            self.assertIn(word, text)
+
+    @unittest.skipUnless(importlib.util.find_spec("yaml"), "PyYAML is not installed")
+    def test_yaml_aliases_and_tags_are_refused(self):
+        for text in ("a: &x [1, 2]\nb: *x\n", "a: !!python/name:os.system x\n", "a: !custom 1\n"):
+            with self.assertRaises(check_rules.Unsafe):
+                check_rules.load(text)
+
+
+class AlertScenarioTests(unittest.TestCase):
+    def generate(self, seed):
+        out = Path(tempfile.mkdtemp())
+        sys.argv = ["gen_tests.py", "--out", str(out), "--rules", "/rules/alerts.yml", "--seed", str(seed)]
+        gen_tests.main()
+        return out, json.loads((out / "scenarios.json").read_text())
+
+    def test_one_scenario_per_file_for_every_check(self):
+        out, scenarios = self.generate(7)
+        self.assertEqual({s["check"] for s in scenarios}, set(gen_tests.CHECKS))
+        for scenario in scenarios:
+            doc = json.loads((out / scenario["file"]).read_text())
+            self.assertEqual(doc["rule_files"], ["/rules/alerts.yml"])
+            self.assertEqual(len(doc["tests"]), 1)
+            self.assertTrue(scenario["description"])
+
+    def test_series_are_random(self):
+        first = self.generate(1)[0] / "instance-down-1.yml"
+        second = self.generate(2)[0] / "instance-down-1.yml"
+        self.assertNotEqual(first.read_text(), second.read_text())
+
+
+AZ_RE = re.compile(r"^[a-z]{2}(-[a-z]+)+-[0-9]+[a-f]$")
+PRIVATE = [ipaddress.ip_network(n) for n in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16")]
+
+
+def valid_inputs(case):
+    """The input rules of the network module's README, written out in Python."""
+    try:
+        vpc = ipaddress.ip_network(case["vpc_cidr"])
+    except ValueError:
+        return False
+    azs = case["azs"]
+    return (
+        re.fullmatch(r"[a-z][a-z0-9-]{1,18}[a-z0-9]", case["name"]) is not None
+        and case["environment"] in ("dev", "staging", "prod")
+        and vpc.version == 4 and "/" in case["vpc_cidr"] and 16 <= vpc.prefixlen <= 24
+        and any(vpc.subnet_of(p) for p in PRIVATE)
+        and 2 <= len(azs) <= 4 and len(set(azs)) == len(azs)
+        and all(AZ_RE.match(az) for az in azs) and len({az[:-1] for az in azs}) == 1
+    )
+
+
+class NetworkModuleTests(unittest.TestCase):
+    def test_az_letter_picks_the_block(self):
+        case = {"name": "shop", "environment": "prod", "vpc_cidr": "10.20.0.0/16",
+                "azs": ["eu-west-1b", "eu-west-1a"], "tags": {"Name": "mine", "Team": "x"}}
+        exp = gen_cases.expected(case)
+        self.assertEqual(exp["subnets"]["public/eu-west-1b"]["cidr"], "10.20.16.0/20")
+        self.assertEqual(exp["subnets"]["private/eu-west-1b"]["cidr"], "10.20.144.0/20")
+        self.assertEqual(exp["subnets"]["private/eu-west-1a"]["cidr"], "10.20.128.0/20")
+        self.assertEqual(exp["vpc"]["tags"], {"Name": "shop-prod", "Team": "x", "Environment": "prod",
+                                              "ManagedBy": "terraform"})
+
+    def test_generated_cases_follow_the_rules(self):
+        import random
+        for seed in range(40):
+            gen = gen_cases.Gen(random.Random(seed))
+            self.assertTrue(valid_inputs(gen.good()), seed)
+            for variable, make in (("name", gen.bad_name), ("environment", gen.bad_environment),
+                                   ("vpc_cidr", gen.bad_vpc_cidr), ("azs", gen.bad_azs)):
+                case = gen.good()
+                case[variable] = make()[0]
+                self.assertFalse(valid_inputs(case), (seed, variable, case[variable]))
+
+    def show(self, case, mutate=None):
+        exp = gen_cases.expected(case)
+        resources = [{"address": "aws_vpc.this", "mode": "managed", "type": "aws_vpc", "name": "this",
+                      "values": {"cidr_block": exp["vpc"]["cidr"], "enable_dns_support": True,
+                                 "enable_dns_hostnames": True, "tags": exp["vpc"]["tags"]}}]
+        outputs, ids = {}, {}
+        for key, sub in exp["subnets"].items():
+            tier, az = key.split("/")
+            resources.append({"address": f'aws_subnet.{tier}["{az}"]', "mode": "managed", "type": "aws_subnet",
+                              "name": tier, "index": az,
+                              "values": {"availability_zone": az, "cidr_block": sub["cidr"],
+                                         "map_public_ip_on_launch": sub["public_ip"], "tags": sub["tags"]}})
+            outputs.setdefault(f"{tier}_subnet_cidrs", {})[az] = sub["cidr"]
+            ids.setdefault(f"{tier}_subnet_ids", {})[az] = True
+        show = {"planned_values": {"root_module": {"resources": resources},
+                                   "outputs": {k: {"value": v} for k, v in outputs.items()}},
+                "output_changes": {"vpc_id": {}, **{k: {"after_unknown": v} for k, v in ids.items()}}}
+        show = json.loads(json.dumps(show))
+        if mutate:
+            mutate(show)
+        folder = Path(tempfile.mkdtemp())
+        (folder / "show.json").write_text(json.dumps(show))
+        (folder / "answers.json").write_text(json.dumps({"c": {"kind": "good", "inputs": case, "expected": exp}}))
+        return check_plan.cmd_compare(str(folder / "show.json"), str(folder / "answers.json"), "c")
+
+    CASE = {"name": "orders", "environment": "dev", "vpc_cidr": "192.168.4.0/24",
+            "azs": ["us-east-1f", "us-east-1d"], "tags": {}}
+
+    def test_matching_plan_passes(self):
+        self.assertEqual(self.show(self.CASE), {"subnets": [], "tags": []})
+
+    def test_wrong_ranges_tags_and_count_keys_fail(self):
+        def overlap(show):
+            show["planned_values"]["root_module"]["resources"][2]["values"]["cidr_block"] = "192.168.4.0/28"
+
+        def tags(show):
+            show["planned_values"]["root_module"]["resources"][0]["values"]["tags"]["Name"] = "x"
+
+        def count(show):
+            for r in show["planned_values"]["root_module"]["resources"][1:]:
+                r["index"] = 0
+
+        self.assertTrue(self.show(self.CASE, overlap)["subnets"])
+        self.assertTrue(self.show(self.CASE, tags)["tags"])
+        self.assertTrue(self.show(self.CASE, count)["subnets"])
+
+    def test_only_validation_rules_count_as_rejections(self):
+        folder = Path(tempfile.mkdtemp())
+        validation = {"type": "diagnostic", "diagnostic": {"severity": "error", "summary": "Invalid value for variable",
+                                                           "detail": "x\n\nThis was checked by the validation rule at variables.tf:3,3-13."}}
+        other = {"type": "diagnostic", "diagnostic": {"severity": "error", "summary": "Invalid function argument"}}
+        (folder / "a.jsonl").write_text(json.dumps(validation) + "\n")
+        (folder / "b.jsonl").write_text(json.dumps(other) + "\nnot json\n")
+        self.assertTrue(check_plan.cmd_diagnostics(str(folder / "a.jsonl"))["validation"])
+        self.assertFalse(check_plan.cmd_diagnostics(str(folder / "b.jsonl"))["validation"])
+
+
+class QueryGateTests(unittest.TestCase):
+    def test_starter_queries_pass_the_gate(self):
+        for path in (ROOT / "challenges" / "speed-up-the-queries" / "queries").glob("*.sql"):
+            self.assertIsNotNone(sqlcheck.plain_query(path.read_text()), path.name)
+
+    def test_one_select_only(self):
+        ok = ("SELECT 1", "with a as (select 1) select * from a;", "-- note; with a semicolon\nSELECT 1",
+              "/* c */ (SELECT 1)")
+        bad = ("", "SET enable_seqscan = off; SELECT 1", "SELECT 1; SELECT 2", "DELETE FROM orders",
+               "-- c\nUPDATE orders SET status = 'x'", "EXPLAIN SELECT 1", "SELECT 1 -- x\n; SET a = 1",
+               "SELECT 'a" + "x" * 5000 + "'")
+        for query in ok:
+            self.assertIsNotNone(sqlcheck.plain_query(query), query)
+        for query in bad:
+            self.assertIsNone(sqlcheck.plain_query(query), query)
+
+    def test_pages_and_seq_scans_are_read_from_the_whole_plan(self):
+        plan = {"Node Type": "Limit", "Shared Hit Blocks": 30, "Shared Read Blocks": 4, "Temp Written Blocks": 2,
+                "Plans": [{"Node Type": "Sort", "Plans": [{"Node Type": "Seq Scan", "Relation Name": "orders"}]},
+                          {"Node Type": "Seq Scan", "Relation Name": "pg_class"}]}
+        self.assertEqual(sqlcheck.plan_pages(plan), 36)
+        self.assertEqual(sqlcheck.seq_scans(plan), ["orders"])
 
 
 if __name__ == "__main__":

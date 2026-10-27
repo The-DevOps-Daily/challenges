@@ -1,0 +1,36 @@
+{
+  "id": "fix-the-network-module",
+  "title": "Fix the network module",
+  "summary": "A Terraform module for a VPC and its subnets broke in a refactor: it does not validate, its subnets overlap and it accepts any input. Fix it until its tests and random plans pass, with no AWS account.",
+  "difficulty": "intermediate",
+  "minutes": 60,
+  "tags": ["terraform", "aws", "vpc", "infrastructure-as-code", "networking", "testing"],
+  "solution_paths": ["main.tf", "variables.tf", "outputs.tf"],
+  "checks": [
+    {
+      "id": "fmt-validate",
+      "name": "Formatted and valid",
+      "description": "terraform init works with no network and only the AWS provider, terraform validate passes, and terraform fmt has nothing to change in main.tf, variables.tf and outputs.tf."
+    },
+    {
+      "id": "module-tests",
+      "name": "The module's tests pass",
+      "description": "terraform test passes every run in tests/network.tftest.hcl, with a mock AWS provider."
+    },
+    {
+      "id": "inputs",
+      "name": "Inputs are validated",
+      "description": "Eight random bad inputs, two each for name, environment, vpc_cidr and azs, are each rejected by a variable validation rule, and three random sets of good inputs plan without errors."
+    },
+    {
+      "id": "subnets",
+      "name": "Subnets for random inputs",
+      "description": "For three random sets of good inputs, the plan has aws_vpc.this with DNS turned on, and one public and one private subnet per AZ, keyed by AZ name, with the range the AZ letter picks. The outputs map AZs to subnet ranges and IDs."
+    },
+    {
+      "id": "tags",
+      "name": "Tags",
+      "description": "In the same plans, the VPC and every subnet have the caller's tags plus Name, Environment, ManagedBy and, on subnets, Tier from the module, and the module's values win."
+    }
+  ]
+}

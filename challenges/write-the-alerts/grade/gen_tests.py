@@ -1,0 +1,465 @@
+"""Generate random promtool unit tests for the four checkout alerts.
+
+  python3 gen_tests.py --out DIR [--rules PATH] [--seed N]
+
+Writes one test file per scenario to DIR, named <check>-<n>.yml, and
+DIR/scenarios.json with the check and a description of each file. Each test
+file holds a single scenario, so promtool's exit code says whether that
+scenario passed.
+
+Every value is random: instance addresses, traffic, error ratios, latencies
+and the minute at which things go wrong. Scenarios keep a wide margin around
+each threshold, so a correct rule always passes and the answers cannot be
+looked up in a table.
+
+The tests read the ALERTS series, which Prometheus writes for every pending
+and firing alert, and count firing alerts by the labels that matter. Extra
+labels on an alert are fine. The files are JSON, which promtool reads as YAML.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import random
+import secrets
+from pathlib import Path
+
+JOB = "checkout"
+CHECKOUT = "/api/checkout"
+ROUTES = [CHECKOUT, "/api/cart", "/api/products"]
+BUCKETS = ["0.05", "0.1", "0.25", "0.5", "1.0", "2.5", "5.0", "+Inf"]
+# A typical value inside each bucket, for the _sum series.
+BUCKET_MID = [0.03, 0.075, 0.17, 0.37, 0.7, 1.7, 3.6, 7.0]
+
+
+class Gen:
+    def __init__(self, rng: random.Random):
+        self.rng = rng
+        self.used: set[str] = set()
+
+    def instance(self) -> str:
+        while True:
+            parts = [10, self.rng.randrange(0, 256), self.rng.randrange(0, 256), self.rng.randrange(2, 255)]
+            name = ".".join(map(str, parts)) + ":" + self.rng.choice(["8080", "9090", "8000"])
+            if name not in self.used:
+                self.used.add(name)
+                return name
+
+    def uniform(self, lo: float, hi: float) -> float:
+        return self.rng.uniform(lo, hi)
+
+    def randint(self, lo: int, hi: int) -> int:
+        return self.rng.randint(lo, hi)
+
+
+def labels(name: str, **kv: str) -> str:
+    inner = ",".join(f'{k}="{v}"' for k, v in kv.items())
+    return f"{name}{{{inner}}}"
+
+
+def minutes(m: float) -> str:
+    whole = int(m)
+    secs = round((m - whole) * 60)
+    return f"{whole}m{secs}s" if secs else f"{whole}m"
+
+
+def values(points: list) -> str:
+    out = []
+    for p in points:
+        if p is None:
+            out.append("_")
+        elif p == "stale":
+            out.append("stale")
+        elif isinstance(p, float):
+            out.append(f"{p:.6g}")
+        else:
+            out.append(str(p))
+    return " ".join(out)
+
+
+def counter(per_minute: list[float], jitter: float, gen: Gen) -> list[int]:
+    """Cumulative counter values from per-minute increments, with a little noise."""
+    total, out = 0.0, [0]
+    for inc in per_minute:
+        if inc > 0 and jitter:
+            inc *= 1 + gen.uniform(-jitter, jitter)
+        total += max(inc, 0.0)
+        out.append(round(total))
+    return out
+
+
+def firing(alert: str, by: list[str]) -> str:
+    return f'count by ({", ".join(["alertname", *by])}) (ALERTS{{alertname="{alert}",alertstate="firing"}})'
+
+
+def expect(labelsets: list[dict]) -> list[dict]:
+    return [{"labels": "{" + ",".join(f'{k}="{v}"' for k, v in ls.items()) + "}", "value": 1} for ls in labelsets]
+
+
+def test_file(rules: str, name: str, series: list[tuple[str, list]], checks: list[tuple[str, float, list[dict]]]) -> dict:
+    return {
+        "rule_files": [rules],
+        "evaluation_interval": "1m",
+        "tests": [
+            {
+                "name": name,
+                "interval": "1m",
+                "input_series": [{"series": s, "values": values(v)} for s, v in series],
+                "promql_expr_test": [
+                    {"expr": expr, "eval_time": minutes(at), "exp_samples": expect(exp)} for expr, at, exp in checks
+                ],
+            }
+        ],
+    }
+
+
+# --- CheckoutInstanceDown ----------------------------------------------------
+
+
+def instance_down(gen: Gen) -> list[tuple[str, dict]]:
+    alert, by = "CheckoutInstanceDown", ["instance", "severity"]
+    q = firing(alert, by)
+    out = []
+
+    # Two instances go down a little apart and stay down; two stay up.
+    a, b, c, d = (gen.instance() for _ in range(4))
+    down_a = gen.randint(5, 9)
+    down_b = down_a + gen.randint(1, 3)
+    length = down_b + 9
+    series = []
+    for inst, down in ((a, down_a), (b, down_b), (c, None), (d, None)):
+        pts = [1 if down is None or i < down else 0 for i in range(length)]
+        series.append((labels("up", job=JOB, instance=inst), pts))
+    gen.rng.shuffle(series)
+    exp_a = {"alertname": alert, "instance": a, "severity": "page"}
+    exp_b = {"alertname": alert, "instance": b, "severity": "page"}
+    out.append((
+        "an instance that stays down alerts after 3 minutes, one alert per instance, with severity page",
+        test_file("", "instances down", series, [
+            (q, down_a - 1, []),
+            (q, down_a + 3.5, [exp_a]),
+            (q, down_b + 3.5, [exp_a, exp_b]),
+        ]),
+    ))
+
+    # Short blips: three failed scrapes in a row (2 minutes) and a single one.
+    a, b, c = (gen.instance() for _ in range(3))
+    start = gen.randint(5, 9)
+    length = start + 12
+    series = [
+        (labels("up", job=JOB, instance=a), [0 if start <= i <= start + 2 else 1 for i in range(length)]),
+        (labels("up", job=JOB, instance=b), [0 if i == start + 6 else 1 for i in range(length)]),
+        (labels("up", job=JOB, instance=c), [1] * length),
+    ]
+    out.append((
+        "an instance that misses 2 minutes of scrapes and comes back does not alert",
+        test_file("", "short blips", series, [(q, start + t, []) for t in (1, 2, 2.5, 3, 4, 7, 8)]),
+    ))
+
+    # An instance of another job is down for a long time.
+    a, b, c = (gen.instance() for _ in range(3))
+    start = gen.randint(3, 6)
+    length = start + 14
+    series = [
+        (labels("up", job="payments", instance=a), [0 if i >= start else 1 for i in range(length)]),
+        (labels("up", job=JOB, instance=b), [1] * length),
+        (labels("up", job=JOB, instance=c), [1] * length),
+    ]
+    out.append((
+        "an instance of another job that is down does not alert",
+        test_file("", "other job down", series, [(q, start + t, []) for t in (4, 8, 12)]),
+    ))
+    return out
+
+
+# --- CheckoutTargetsMissing --------------------------------------------------
+
+
+def targets_missing(gen: Gen) -> list[tuple[str, dict]]:
+    alert = "CheckoutTargetsMissing"
+    q = firing(alert, ["severity"])
+    exp = [{"alertname": alert, "severity": "page"}]
+    out = []
+
+    # Service discovery loses every checkout target: their series go stale.
+    gone = gen.randint(5, 9)
+    length = gone + 14
+    series = []
+    for _ in range(gen.randint(2, 4)):
+        series.append((labels("up", job=JOB, instance=gen.instance()), [1] * gone + ["stale"]))
+    series.append((labels("up", job="payments", instance=gen.instance()), [1] * length))
+    out.append((
+        "when every checkout target disappears, it alerts after 5 minutes, with severity page",
+        test_file("", "targets gone", series, [
+            (q, gone - 1, []),
+            (q, gone + 4, []),
+            (q, gone + 6, exp),
+            (q, gone + 12, exp),
+        ]),
+    ))
+
+    # Checkout was never scraped at all; another job was.
+    length = 14
+    series = [(labels("up", job="payments", instance=gen.instance()), [1] * length)]
+    out.append((
+        "when no checkout target was ever scraped, it alerts after 5 minutes",
+        test_file("", "never scraped", series, [(q, 3, []), (q, 7, exp), (q, 12, exp)]),
+    ))
+
+    # Every checkout instance is down but still scraped: up is 0, not missing.
+    down = gen.randint(3, 6)
+    length = down + 16
+    series = [
+        (labels("up", job=JOB, instance=gen.instance()), [1 if i < down else 0 for i in range(length)])
+        for _ in range(gen.randint(2, 3))
+    ]
+    out.append((
+        "instances that are down but still scraped (up is 0) do not count as missing",
+        test_file("", "down but scraped", series, [(q, down + t, []) for t in (4, 8, 14)]),
+    ))
+
+    # Another job's targets disappear; checkout stays.
+    gone = gen.randint(4, 8)
+    length = gone + 14
+    series = [
+        (labels("up", job="payments", instance=gen.instance()), [1] * gone + ["stale"]),
+        (labels("up", job=JOB, instance=gen.instance()), [1] * length),
+    ]
+    out.append((
+        "when another job's targets disappear, it does not alert",
+        test_file("", "other job gone", series, [(q, gone + t, []) for t in (4, 8, 12)]),
+    ))
+    return out
+
+
+# --- CheckoutHighErrorRate ---------------------------------------------------
+
+
+def request_series(gen: Gen, job: str, instances: list[str], weights: list[float], length: int, phases) -> list:
+    """http_requests_total series for one job.
+
+    phases(minute) -> (requests per second for the whole job, 5xx ratio, 4xx ratio, per-instance overrides)
+    where overrides maps an instance to its own 5xx ratio.
+    """
+    routes = [(CHECKOUT, 0.5), ("/api/cart", 0.3), ("/api/products", 0.2)]
+    series = []
+    for inst, w in zip(instances, weights):
+        for route, rw in routes:
+            for code in ("200", "404", "500", "503"):
+                incs = []
+                for minute in range(length - 1):
+                    rps, p5, p4, over = phases(minute)
+                    p5 = over.get(inst, p5)
+                    n = rps * 60 * w * rw
+                    share = {"200": 1 - p5 - p4, "404": p4, "500": p5 * 0.6, "503": p5 * 0.4}[code]
+                    incs.append(n * share)
+                series.append((labels("http_requests_total", job=job, instance=inst, route=route, code=code),
+                               counter(incs, 0.05, gen)))
+    return series
+
+
+def weights(gen: Gen, n: int) -> list[float]:
+    raw = [gen.uniform(0.8, 1.2) for _ in range(n)]
+    return [r / sum(raw) for r in raw]
+
+
+def error_rate(gen: Gen) -> list[tuple[str, dict]]:
+    alert = "CheckoutHighErrorRate"
+    q = firing(alert, ["severity"])
+    exp = [{"alertname": alert, "severity": "page"}]
+    out = []
+
+    # A bad deploy: 10 to 25% of requests fail from minute t0 on.
+    insts = [gen.instance() for _ in range(3)]
+    rps, base5, bad5, p4 = gen.uniform(8, 30), gen.uniform(0, 0.01), gen.uniform(0.10, 0.25), gen.uniform(0.02, 0.08)
+    t0 = gen.randint(7, 10)
+    length = t0 + 17
+    series = request_series(gen, JOB, insts, weights(gen, 3), length,
+                            lambda m: (rps, bad5 if m >= t0 else base5, p4, {}))
+    out.append((
+        f"when {bad5:.0%} of requests fail with a 5xx at {rps:.0f} requests per second, it alerts after 5 minutes "
+        "(not in the first 2), with severity page",
+        test_file("", "bad deploy", series, [(q, t0 - 1, []), (q, t0 + 2, []), (q, t0 + 12, exp), (q, t0 + 15, exp)]),
+    ))
+
+    # A steady 1 to 3% of 5xx, while another job fails a lot.
+    insts = [gen.instance() for _ in range(3)]
+    rps, p5, p4 = gen.uniform(8, 30), gen.uniform(0.01, 0.03), gen.uniform(0.02, 0.08)
+    length = 26
+    series = request_series(gen, JOB, insts, weights(gen, 3), length, lambda m: (rps, p5, p4, {}))
+    other, other_rps = [gen.instance() for _ in range(2)], rps * gen.uniform(0.8, 1.2)
+    series += request_series(gen, "payments", other, weights(gen, 2), length, lambda m: (other_rps, 0.3, 0.02, {}))
+    out.append((
+        f"a steady {p5:.1%} of 5xx does not alert, even when another job fails a lot",
+        test_file("", "low 5xx", series, [(q, t, []) for t in (10, 16, 22, 25)]),
+    ))
+
+    # Lots of 4xx (bad requests from clients), few 5xx.
+    insts = [gen.instance() for _ in range(3)]
+    rps, p5, p4 = gen.uniform(8, 30), gen.uniform(0, 0.01), gen.uniform(0.2, 0.4)
+    series = request_series(gen, JOB, insts, weights(gen, 3), length, lambda m: (rps, p5, p4, {}))
+    out.append((
+        f"{p4:.0%} of 4xx answers do not alert: only 5xx count as errors",
+        test_file("", "4xx", series, [(q, t, []) for t in (10, 16, 22, 25)]),
+    ))
+
+    # The middle of the night: well under 1 request per second, half of them fail.
+    insts = [gen.instance() for _ in range(2)]
+    rps, p5 = gen.uniform(0.15, 0.5), gen.uniform(0.4, 0.6)
+    series = request_series(gen, JOB, insts, weights(gen, 2), length, lambda m: (rps, p5, 0.02, {}))
+    out.append((
+        f"at {rps:.2f} requests per second, under 1, it does not alert even though {p5:.0%} fail",
+        test_file("", "low traffic", series, [(q, t, []) for t in (10, 16, 22, 25)]),
+    ))
+
+    # One small instance fails a lot; the service as a whole stays under 5%.
+    insts = [gen.instance() for _ in range(4)]
+    w = [0.05] + [0.95 / 3] * 3
+    rps, bad, p5 = gen.uniform(25, 40), gen.uniform(0.35, 0.5), gen.uniform(0, 0.005)
+    series = request_series(gen, JOB, insts, w, length, lambda m: (rps, p5, 0.03, {insts[0]: bad}))
+    out.append((
+        f"one instance with 5% of the traffic failing {bad:.0%} of requests does not alert: "
+        "the whole service stays under 5%",
+        test_file("", "one bad instance", series, [(q, t, []) for t in (10, 16, 22, 25)]),
+    ))
+    return out
+
+
+# --- CheckoutSlowRequests ----------------------------------------------------
+
+FAST = [0.70, 0.25, 0.04, 0.01, 0, 0, 0, 0]
+# Most requests are fast, 12% take 1 to 2.5 s: p95 is well over 500 ms, but
+# the average stays under 500 ms.
+TAIL = [0.80, 0.08, 0, 0, 0, 0.12, 0, 0]
+SLOW = [0, 0, 0, 0, 0, 1.0, 0, 0]
+
+
+def histogram_series(gen: Gen, inst: str, route: str, length: int, rpm, dist) -> list:
+    """Bucket, _sum and _count series for one instance and route.
+
+    rpm(minute) is requests per minute, dist(minute) the share per bucket.
+    """
+    per_bucket = [[] for _ in BUCKETS]
+    sums = []
+    for minute in range(length - 1):
+        n = rpm(minute)
+        shares = dist(minute)
+        for i, share in enumerate(shares):
+            per_bucket[i].append(n * share)
+        sums.append(n * sum(s * mid for s, mid in zip(shares, BUCKET_MID)))
+    noisy = [[inc * (1 + gen.uniform(-0.03, 0.03)) for inc in incs] for incs in per_bucket]
+    cumulative = [[0.0] * (length - 1) for _ in BUCKETS]
+    for i in range(len(BUCKETS)):
+        for m in range(length - 1):
+            cumulative[i][m] = sum(noisy[j][m] for j in range(i + 1))
+    out = []
+    for le, incs in zip(BUCKETS, cumulative):
+        out.append((labels("http_request_duration_seconds_bucket", job=JOB, instance=inst, route=route, le=le),
+                    counter(incs, 0, gen)))
+    count = counter(cumulative[-1], 0, gen)
+    total, sum_pts = 0.0, [0.0]
+    for s in sums:
+        total += s
+        sum_pts.append(round(total, 3))
+    out.append((labels("http_request_duration_seconds_count", job=JOB, instance=inst, route=route), count))
+    out.append((labels("http_request_duration_seconds_sum", job=JOB, instance=inst, route=route), sum_pts))
+    return out
+
+
+def latency_series(gen: Gen, length: int, rps: float, dist_for, inst_weights=None) -> list:
+    """Histograms for /api/checkout and /api/cart on each instance.
+
+    dist_for(minute, instance_index, route) gives the bucket shares.
+    """
+    w = inst_weights or weights(gen, 3)
+    series = []
+    for idx, iw in enumerate(w):
+        inst = gen.instance()
+        for route, rw in ((CHECKOUT, 0.6), ("/api/cart", 0.4)):
+            series += histogram_series(gen, inst, route, length, lambda m, iw=iw, rw=rw: rps * 60 * iw * rw,
+                                       lambda m, idx=idx, route=route: dist_for(m, idx, route))
+    return series
+
+
+def slow_requests(gen: Gen) -> list[tuple[str, dict]]:
+    alert = "CheckoutSlowRequests"
+    q = firing(alert, ["severity"])
+    exp = [{"alertname": alert, "severity": "ticket"}]
+    out = []
+
+    rps = gen.uniform(5, 20)
+    t0 = gen.randint(7, 10)
+    length = t0 + 21
+    series = latency_series(gen, length, rps,
+                               lambda m, idx, route: TAIL if route == CHECKOUT and m >= t0 else FAST)
+    out.append((
+        "when 12% of /api/checkout requests take over a second (p95 well over 500 ms, average under it), "
+        "it alerts after 10 minutes, with severity ticket",
+        test_file("", "slow checkout", series, [(q, t0 - 1, []), (q, t0 + 5, []), (q, t0 + 16, exp), (q, t0 + 19, exp)]),
+    ))
+
+    length = 26
+    series = latency_series(gen, length, gen.uniform(5, 20), lambda m, idx, route: FAST)
+    out.append((
+        "fast requests (p95 around 100 ms) do not alert",
+        test_file("", "fast", series, [(q, t, []) for t in (10, 16, 22, 25)]),
+    ))
+
+    series = latency_series(gen, length, gen.uniform(5, 20),
+                               lambda m, idx, route: SLOW if route != CHECKOUT else FAST)
+    out.append((
+        "a slow route other than /api/checkout does not alert",
+        test_file("", "other route slow", series, [(q, t, []) for t in (10, 16, 22, 25)]),
+    ))
+
+    # The first instance gets 3% of the traffic, and all of it is slow.
+    series = latency_series(gen, length, gen.uniform(20, 40), lambda m, idx, route: SLOW if idx == 0 else FAST,
+                            [0.03, 0.97 / 3, 0.97 / 3, 0.97 / 3])
+    out.append((
+        "one instance with 3% of the traffic that is slow does not alert: p95 is for the whole service",
+        test_file("", "one slow instance", series, [(q, t, []) for t in (10, 16, 22, 25)]),
+    ))
+
+    t0 = gen.randint(7, 10)
+    length = t0 + 16
+    short = [0.75, 0.05, 0, 0, 0, 0.20, 0, 0]
+    series = latency_series(gen, length, gen.uniform(5, 20),
+                               lambda m, idx, route: short if route == CHECKOUT and t0 <= m < t0 + 4 else FAST)
+    out.append((
+        "a 4-minute slowdown does not alert: it has to last 10 minutes",
+        test_file("", "short slowdown", series, [(q, t0 + t, []) for t in (5, 6.5, 7, 8, 10, 14)]),
+    ))
+    return out
+
+
+CHECKS = {
+    "instance-down": instance_down,
+    "targets-missing": targets_missing,
+    "error-rate": error_rate,
+    "slow-requests": slow_requests,
+}
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--out", required=True)
+    parser.add_argument("--rules", default="../alerts.yml", help="path to alerts.yml as promtool sees it")
+    parser.add_argument("--seed", type=int, help="for repeatable local runs; grading uses a random seed")
+    args = parser.parse_args()
+    rng = random.Random(args.seed if args.seed is not None else secrets.randbits(64))
+    gen = Gen(rng)
+    out = Path(args.out)
+    out.mkdir(parents=True, exist_ok=True)
+    scenarios = []
+    for check, make in CHECKS.items():
+        for n, (description, doc) in enumerate(make(gen), start=1):
+            doc["rule_files"] = [args.rules]
+            name = f"{check}-{n}.yml"
+            (out / name).write_text(json.dumps(doc, indent=1) + "\n", encoding="utf-8")
+            scenarios.append({"file": name, "check": check, "description": description})
+    (out / "scenarios.json").write_text(json.dumps(scenarios, indent=2) + "\n", encoding="utf-8")
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,36 @@
+{
+  "id": "write-the-alerts",
+  "title": "Write the alerts",
+  "summary": "The checkout service has metrics but no useful alerts. Write four Prometheus alert rules that page for real outages and stay quiet for blips, quiet nights and other services.",
+  "difficulty": "intermediate",
+  "minutes": 45,
+  "tags": ["prometheus", "alerting", "promql", "observability", "monitoring", "sre"],
+  "solution_paths": ["alerts.yml"],
+  "checks": [
+    {
+      "id": "rules-load",
+      "name": "The rules load",
+      "description": "promtool check rules passes, and alerts.yml defines CheckoutInstanceDown, CheckoutTargetsMissing, CheckoutHighErrorRate and CheckoutSlowRequests once each, with the severity label from the brief and a summary and an https runbook_url annotation."
+    },
+    {
+      "id": "instance-down",
+      "name": "Instance down",
+      "description": "Random scenarios: an instance that stays down alerts after 3 minutes, one alert per instance; a 2-minute blip does not alert; an instance of another job does not alert."
+    },
+    {
+      "id": "targets-missing",
+      "name": "Targets missing",
+      "description": "Random scenarios: when every checkout target disappears, or was never scraped, it alerts after 5 minutes; instances that are down but still scraped and another job's targets do not count."
+    },
+    {
+      "id": "error-rate",
+      "name": "Error rate",
+      "description": "Random scenarios: 10 to 25% of 5xx answers alert after 5 minutes but not in the first 2; a few 5xx, many 4xx, under 1 request per second, and one small failing instance do not alert."
+    },
+    {
+      "id": "slow-requests",
+      "name": "Slow requests",
+      "description": "Random scenarios: a p95 for /api/checkout well over 500 ms alerts after 10 minutes with severity ticket; fast requests, another slow route, one small slow instance and a 4-minute slowdown do not alert."
+    }
+  ]
+}

@@ -1,0 +1,13 @@
+# Alert rules for the checkout service. README.md says what each alert must do.
+groups:
+  - name: checkout
+    rules:
+      - alert: CheckoutDown
+        expr: up == 0
+        labels:
+          severity: page
+
+      - alert: CheckoutHighErrorRate
+        expr: rate(http_requests_total{code=~"5.."}[5m]) > 0.05
+        labels:
+          severity: page

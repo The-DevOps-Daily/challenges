@@ -1,0 +1,8 @@
+# Made by terraform init and plan on your machine. Do not commit them: a PR
+# may only change main.tf, variables.tf and outputs.tf.
+.terraform/
+.terraform.lock.hcl
+*.tfstate
+*.tfstate.*
+*.tfplan
+zz_grader_provider.tf

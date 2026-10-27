@@ -1,0 +1,57 @@
+# A small, fixed promtool unit test to start from. The grader runs tests like
+# this one, with random series, for all four alerts (see grade/gen_tests.py).
+#
+#   promtool test rules tests/example.test.yml
+#
+# It reads the ALERTS series, which Prometheus writes for every pending and
+# firing alert, so your own annotations and extra labels do not matter here.
+rule_files:
+  - ../alerts.yml
+
+evaluation_interval: 1m
+
+tests:
+  - name: an instance that stays down alerts after 3 minutes
+    interval: 1m
+    input_series:
+      - series: 'up{job="checkout", instance="10.0.1.5:8080"}'
+        values: "1 1 1 1 1 0 0 0 0 0 0 0"
+      - series: 'up{job="checkout", instance="10.0.1.6:8080"}'
+        values: "1 1 1 1 1 1 1 1 1 1 1 1"
+    promql_expr_test:
+      - expr: count by (alertname, instance, severity) (ALERTS{alertname="CheckoutInstanceDown", alertstate="firing"})
+        eval_time: 7m
+        exp_samples: []
+      - expr: count by (alertname, instance, severity) (ALERTS{alertname="CheckoutInstanceDown", alertstate="firing"})
+        eval_time: 9m
+        exp_samples:
+          - labels: '{alertname="CheckoutInstanceDown", instance="10.0.1.5:8080", severity="page"}'
+            value: 1
+
+  - name: one failed scrape does not alert
+    interval: 1m
+    input_series:
+      - series: 'up{job="checkout", instance="10.0.1.5:8080"}'
+        values: "1 1 1 0 1 1 1 1 1 1"
+    promql_expr_test:
+      - expr: count by (alertname, instance, severity) (ALERTS{alertname="CheckoutInstanceDown", alertstate="firing"})
+        eval_time: 3m
+        exp_samples: []
+      - expr: count by (alertname, instance, severity) (ALERTS{alertname="CheckoutInstanceDown", alertstate="firing"})
+        eval_time: 8m
+        exp_samples: []
+
+  - name: 20% of 5xx at 10 requests per second alerts
+    interval: 1m
+    input_series:
+      # 600 requests a minute: 480 answered 200, 120 answered 500.
+      - series: 'http_requests_total{job="checkout", instance="10.0.1.5:8080", route="/api/checkout", code="200"}'
+        values: "0+480x30"
+      - series: 'http_requests_total{job="checkout", instance="10.0.1.5:8080", route="/api/checkout", code="500"}'
+        values: "0+120x30"
+    promql_expr_test:
+      - expr: count by (alertname, severity) (ALERTS{alertname="CheckoutHighErrorRate", alertstate="firing"})
+        eval_time: 20m
+        exp_samples:
+          - labels: '{alertname="CheckoutHighErrorRate", severity="page"}'
+            value: 1

@@ -1,0 +1,5 @@
+# Installed by grade.sh into a venv on the runner to read alerts.yml as data
+# (check_rules.py). Wheels only; the second hash is for local runs on arm64.
+PyYAML==6.0.3 \
+    --hash=sha256:ba1cc08a7ccde2d2ec775841541641e4548226580ab850948cbfda66a1befcdc \
+    --hash=sha256:10892704fc220243f5305762e276552a0395f7beb4dbf9b14ec8fd43b57f126c

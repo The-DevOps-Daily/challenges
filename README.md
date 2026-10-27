@@ -2,7 +2,7 @@
 
 Fix a real thing, open a pull request, and CI grades it.
 
-Each challenge is a folder with something broken or unfinished in it: a bloated Dockerfile, a half-written script, a Deployment that never comes up. You fix it in your fork and open a PR against this repo. A GitHub Actions workflow grades the PR, comments pass or fail for each check, and closes the PR when you pass. Submissions are never merged.
+Each challenge is a folder with something broken or unfinished in it: a bloated Dockerfile, a half-written script, a Deployment that never comes up, a Terraform module that broke in a refactor, alerts that page for the wrong things, queries that read whole tables. You fix it in your fork and open a PR against this repo. A GitHub Actions workflow grades the PR, comments pass or fail for each check, and closes the PR when you pass. Submissions are never merged.
 
 All challenges, with how many people passed each one: [devops-daily.com/challenges](https://devops-daily.com/challenges)
 
@@ -13,6 +13,9 @@ All challenges, with how many people passed each one: [devops-daily.com/challeng
 | [Shrink the image](challenges/shrink-the-image) | Docker | Starter | 30 min |
 | [Script it: summarize an access log](challenges/script-it) | Bash | Starter | 45 min |
 | [Fix the deployment](challenges/fix-the-deployment) | Kubernetes | Intermediate | 45 min |
+| [Write the alerts](challenges/write-the-alerts) | Prometheus | Intermediate | 45 min |
+| [Speed up the slow queries](challenges/speed-up-the-queries) | PostgreSQL | Intermediate | 45 min |
+| [Fix the network module](challenges/fix-the-network-module) | Terraform | Intermediate | 60 min |
 
 ## How it works
 
@@ -35,9 +38,9 @@ All challenges, with how many people passed each one: [devops-daily.com/challeng
 You control your PR, so the grader never trusts it:
 
 - The tests, the grader and the workflow come from `main`. The Grade workflow copies only the challenge's solution files out of your PR, through the GitHub API, into a fresh copy of the challenge from `main`. Your branch is never checked out.
-- Your code runs only in containers or a throwaway kind cluster. A script runs in a container with no network, an unprivileged user and read-only files. A Dockerfile builds with a pinned official frontend. Kubernetes manifests are checked before anything is applied, and the namespace enforces Pod Security "restricted".
+- Your code runs only in containers or a throwaway kind cluster. A script runs in a container with no network, an unprivileged user and read-only files. A Dockerfile builds with a pinned official frontend. Kubernetes manifests are checked before anything is applied, and the namespace enforces Pod Security "restricted". Terraform and promtool run in containers with no network, so a module can only plan with the pinned AWS provider and never reaches AWS. SQL runs in a PostgreSQL container without superuser rights: the migration runs on the empty tables before the data exists and may leave nothing but indexes, and the queries run as a read-only user.
 - The Grade workflow has a read-only token and no secrets. It only uploads a small result file. The Report workflow runs from `main`, reads that file as data, checks it against the files your PR's head commit changes, and only then comments, labels and closes.
-- Some inputs are random at grading time (generated logs, random text for the app), so the checks do not compare against fixed answers you could copy.
+- Some inputs are random at grading time (generated logs, random text for the app, random metric series, Terraform inputs and database rows), so the checks do not compare against fixed answers you could copy.
 
 Found a way around it? Report it privately under **Security > Report a vulnerability** instead of opening a PR.
 
