@@ -1,0 +1,199 @@
+"""Generate random inputs for the network module, and the expected results.
+
+  python3 gen_cases.py --cases DIR --answers FILE [--seed N]
+
+Writes one <id>.tfvars.json per case to DIR, and FILE with what each case
+expects. The grader mounts a single tfvars file into the container that plans
+the module; the answers never go into a container.
+
+- "good" cases: valid inputs. The plan must succeed and match the expected
+  VPC, subnets, outputs and tags.
+- "bad" cases: valid inputs except one variable, which breaks one rule from
+  the README. A validation rule must reject the plan.
+
+Values never sit on the edge of a rule the README leaves open, so a correct
+module always passes.
+"""
+
+from __future__ import annotations
+
+import argparse
+import ipaddress
+import json
+import random
+import secrets
+import string
+from pathlib import Path
+
+REGIONS = ["eu-west-1", "eu-west-2", "eu-central-1", "eu-north-1", "us-east-1", "us-east-2",
+           "us-west-2", "ca-central-1", "ap-southeast-2", "ap-northeast-1", "sa-east-1"]
+LETTERS = "abcdef"
+PRIVATE = [ipaddress.ip_network("10.0.0.0/8"), ipaddress.ip_network("172.16.0.0/12"),
+           ipaddress.ip_network("192.168.0.0/16")]
+EXTRA_TAGS = ["Team", "CostCenter", "Owner", "Project", "Service"]
+MODULE_TAGS = ["Name", "Environment", "ManagedBy"]
+WORDS = ["shop", "orders", "billing", "search", "edge", "data", "core", "api", "web", "batch", "ml", "auth"]
+
+
+class Gen:
+    def __init__(self, rng: random.Random):
+        self.rng = rng
+
+    # --- good values -------------------------------------------------------
+
+    def name(self) -> str:
+        r = self.rng
+        while True:
+            parts = [r.choice(WORDS) for _ in range(r.randint(1, 3))]
+            if r.random() < 0.4:
+                parts.append(str(r.randint(1, 99)))
+            name = "-".join(parts)
+            if 3 <= len(name) <= 20:
+                return name
+
+    def environment(self) -> str:
+        return self.rng.choice(["dev", "staging", "prod"])
+
+    def vpc_cidr(self) -> str:
+        r = self.rng
+        base = r.choice(PRIVATE)
+        prefix = r.randint(16, 24)
+        count = 2 ** (prefix - base.prefixlen)
+        network = ipaddress.ip_network((int(base.network_address) + r.randrange(count) * 2 ** (32 - prefix), prefix))
+        return str(network)
+
+    def azs(self) -> list[str]:
+        region = self.rng.choice(REGIONS)
+        letters = self.rng.sample(LETTERS, self.rng.randint(2, 4))
+        return [f"{region}{letter}" for letter in letters]
+
+    def tags(self) -> dict[str, str]:
+        r = self.rng
+        keys = r.sample(EXTRA_TAGS, r.randint(0, 3))
+        tags = {k: r.choice(WORDS) + "-" + "".join(r.choices(string.ascii_lowercase, k=4)) for k in keys}
+        if r.random() < 0.6:
+            tags[r.choice(MODULE_TAGS)] = "set-by-caller"
+        return tags
+
+    def good(self) -> dict:
+        return {"name": self.name(), "environment": self.environment(), "vpc_cidr": self.vpc_cidr(),
+                "azs": self.azs(), "tags": self.tags()}
+
+    # --- bad values, one per rule ---------------------------------------------
+
+    def bad_name(self) -> tuple[str, str]:
+        r = self.rng
+        good = self.name()
+        options = [
+            (good[0].upper() + good[1:], "has an upper-case letter"),
+            ("".join(r.choices(string.ascii_lowercase, k=2)), "is 2 characters long"),
+            (good + "-" + "".join(r.choices(string.ascii_lowercase, k=21 - len(good))), "is longer than 20 characters"),
+            (str(r.randint(1, 9)) + good, "starts with a digit"),
+            ("-" + good, "starts with a hyphen"),
+            (good + "-", "ends with a hyphen"),
+            (good.replace("-", "_") if "-" in good else good + "_x", "has an underscore"),
+            (good + " " + r.choice(WORDS), "has a space"),
+            ("", "is empty"),
+        ]
+        return r.choice(options)
+
+    def bad_environment(self) -> tuple[str, str]:
+        value = self.rng.choice(["production", "Prod", "PROD", "development", "test", "stage", "qa", "", "dev ", " prod"])
+        return value, "is not dev, staging or prod"
+
+    def bad_vpc_cidr(self) -> tuple[str, str]:
+        r = self.rng
+        a, b = r.randint(0, 255), r.randint(0, 255)
+        public_first = r.choice([3, 8, 11, 34, 52, 100, 151, 185, 203])
+        options = [
+            (f"{public_first}.{a}.0.0/16", "is a public range"),
+            (f"172.{r.randint(32, 63)}.0.0/16", "is just outside 172.16.0.0/12"),
+            (f"172.{r.randint(0, 15)}.0.0/16", "is just outside 172.16.0.0/12"),
+            (f"192.{r.choice([167, 169, 170])}.{a}.0/24", "is outside 192.168.0.0/16"),
+            (f"10.0.0.0/{r.randint(8, 15)}", "has a prefix shorter than /16"),
+            (f"10.{a}.{b}.0/{r.randint(25, 30)}", "has a prefix longer than /24"),
+            (f"10.{a}.0.0", "has no prefix length"),
+            (f"10.{a}.0.0/33", "has a prefix length over 32"),
+            (f"10.{a}.0.300/16", "is not an IP address"),
+            (f"fd{a:02x}:{b:02x}00::/48", "is an IPv6 block"),
+            (r.choice(["banana", "default", "10.20.0.0-10.20.255.255", ""]), "is not a CIDR block"),
+        ]
+        return r.choice(options)
+
+    def bad_azs(self) -> tuple[list[str], str]:
+        r = self.rng
+        region = r.choice(REGIONS)
+        other = r.choice([x for x in REGIONS if x != region])
+        letters = r.sample(LETTERS, 5)
+        options = [
+            ([f"{region}{r.choice(LETTERS)}"], "lists one AZ"),
+            ([f"{region}{c}" for c in letters], "lists five AZs"),
+            ([f"{region}{letters[0]}", f"{region}{letters[1]}", f"{region}{letters[0]}"], "lists an AZ twice"),
+            ([f"{region}{letters[0]}", f"{other}{letters[1]}"], "has AZs in two regions"),
+            ([f"{region}{letters[0]}", f"{region}{r.choice('ghjk')}"], "has an AZ letter after f"),
+            ([f"{region}{letters[0]}", region], "has a region instead of an AZ"),
+            ([f"{region}{letters[0]}".upper(), f"{region}{letters[1]}".upper()], "has upper-case AZ names"),
+            ([f"{region}{letters[0]}".replace("-", "_"), f"{region}{letters[1]}".replace("-", "_")],
+             "has underscores in the AZ names"),
+        ]
+        return r.choice(options)
+
+
+def expected(case: dict) -> dict:
+    vpc = ipaddress.ip_network(case["vpc_cidr"])
+    blocks = list(vpc.subnets(new_prefix=vpc.prefixlen + 4))
+    prefix = f"{case['name']}-{case['environment']}"
+    module = {"Environment": case["environment"], "ManagedBy": "terraform"}
+    subnets = {}
+    for az in case["azs"]:
+        n = LETTERS.index(az[-1])
+        for tier, block in (("public", n), ("private", n + 8)):
+            subnets[f"{tier}/{az}"] = {
+                "az": az,
+                "cidr": str(blocks[block]),
+                "public_ip": tier == "public",
+                "tags": {**case["tags"], **module, "Name": f"{prefix}-{tier}-{az}", "Tier": tier},
+            }
+    return {
+        "vpc": {"cidr": case["vpc_cidr"], "tags": {**case["tags"], **module, "Name": prefix}},
+        "subnets": subnets,
+    }
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--cases", required=True)
+    parser.add_argument("--answers", required=True)
+    parser.add_argument("--good", type=int, default=3)
+    parser.add_argument("--seed", type=int, help="for repeatable local runs; grading uses a random seed")
+    args = parser.parse_args()
+    rng = random.Random(args.seed if args.seed is not None else secrets.randbits(64))
+    gen = Gen(rng)
+    cases_dir = Path(args.cases)
+    cases_dir.mkdir(parents=True, exist_ok=True)
+
+    cases = []
+    for _ in range(args.good):
+        case = gen.good()
+        cases.append({"kind": "good", "inputs": case, "expected": expected(case)})
+    for variable, make in (("name", gen.bad_name), ("environment", gen.bad_environment),
+                           ("vpc_cidr", gen.bad_vpc_cidr), ("azs", gen.bad_azs)):
+        for _ in range(2):
+            value, why = make()
+            inputs = gen.good()
+            inputs[variable] = value
+            cases.append({"kind": "bad", "inputs": inputs, "variable": variable,
+                          "why": f"{variable} {json.dumps(value)} {why}"})
+    rng.shuffle(cases)
+
+    answers = {}
+    for case in cases:
+        # A random file name, so nothing about a case shows in its name.
+        cid = secrets.token_hex(6) if args.seed is None else "%012x" % rng.getrandbits(48)
+        (cases_dir / f"{cid}.tfvars.json").write_text(json.dumps(case["inputs"], indent=2) + "\n", encoding="utf-8")
+        answers[cid] = case
+    Path(args.answers).write_text(json.dumps(answers, indent=2) + "\n", encoding="utf-8")
+
+
+if __name__ == "__main__":
+    main()

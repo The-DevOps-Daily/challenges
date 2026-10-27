@@ -1,0 +1,10 @@
+# Installed by grade.sh into a venv on the runner, for grade_db.py to talk to
+# the PostgreSQL container. Wheels only; the second psycopg-binary hash is for
+# local runs on arm64.
+psycopg==3.3.6 \
+    --hash=sha256:a1db9f7148b06a28606767efaca51fa6f9398c5c0a3810519be69d7000bdb631
+psycopg-binary==3.3.6 \
+    --hash=sha256:1679a1cb93fbe5a6d1fd58d82cbddcc6fcb8c61446ba7cae6eb2a7b19bc585de \
+    --hash=sha256:5f598f19fa9a91540b5cee17932ffd227b7b53a481605bcc4573c0eafa647300
+typing-extensions==4.16.0 \
+    --hash=sha256:481caa481374e813c1b176ada14e97f1f67a4539ce9cfeb3f350d78d6370c2e8

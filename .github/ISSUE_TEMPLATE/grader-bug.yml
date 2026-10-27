@@ -6,7 +6,7 @@ body:
     id: challenge
     attributes:
       label: Challenge
-      options: [shrink-the-image, script-it, fix-the-deployment]
+      options: [shrink-the-image, script-it, fix-the-deployment, write-the-alerts, speed-up-the-queries, fix-the-network-module]
     validations:
       required: true
   - type: input
