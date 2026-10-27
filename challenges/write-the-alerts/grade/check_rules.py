@@ -1,10 +1,14 @@
 """Check the shape of alerts.yml before any test runs.
 
-  check_rules.py ALERTS_YML
+  check_rules.py ALERTS_YML CANONICAL_JSON
 
 Reads the file as data with PyYAML's safe loader, after refusing anchors,
 aliases and tags (an alias bomb could blow up the memory of the runner).
-Prints one line per problem and exits:
+Unless the file is unsafe, it writes what it read to CANONICAL_JSON, and
+promtool loads that file instead of alerts.yml: JSON is YAML, so promtool
+checks and tests exactly the rules this script looked at, and two YAML
+parsers can never disagree about them. Prints one line per problem and
+exits:
 
   0  the file has the four alerts with the right labels and annotations
   1  problems the PR comment should list; the scenario tests still run
@@ -16,6 +20,8 @@ promtool check rules runs separately, in a container, for the PromQL itself.
 
 from __future__ import annotations
 
+import json
+import re
 import sys
 
 REQUIRED = {
@@ -35,15 +41,36 @@ class Unsafe(Exception):
     pass
 
 
-def load(text: str):
+def loader():
+    """PyYAML's safe loader, reading plain values the way promtool's YAML 1.2 parser does.
+
+    YAML 1.1 turns yes, no, on and off into booleans and 2026-10-28 into a
+    date; promtool keeps them as strings, so this loader does too.
+    """
     import yaml  # here, so the unit tests can use check() without PyYAML
+
+    class Loader(yaml.SafeLoader):
+        pass
+
+    Loader.yaml_implicit_resolvers = {
+        first: [(tag, regexp) for tag, regexp in resolvers
+                if tag not in ("tag:yaml.org,2002:bool", "tag:yaml.org,2002:timestamp")]
+        for first, resolvers in yaml.SafeLoader.yaml_implicit_resolvers.items()
+    }
+    Loader.add_implicit_resolver("tag:yaml.org,2002:bool", re.compile(r"^(?:true|True|TRUE|false|False|FALSE)$"),
+                                 list("tTfF"))
+    return Loader
+
+
+def load(text: str):
+    import yaml
 
     for event in yaml.parse(text, Loader=yaml.SafeLoader):
         if isinstance(event, yaml.AliasEvent) or getattr(event, "anchor", None):
             raise Unsafe("alerts.yml uses YAML anchors or aliases. Write each rule out in full.")
         if getattr(event, "tag", None) is not None:
             raise Unsafe("alerts.yml uses YAML tags. Keep it to plain mappings, lists and strings.")
-    return yaml.safe_load(text)
+    return yaml.load(text, Loader=loader())  # noqa: S506 - a SafeLoader subclass
 
 
 def check(doc) -> tuple[list[str], bool]:
@@ -106,16 +133,17 @@ def check(doc) -> tuple[list[str], bool]:
 
 
 def main() -> int:
-    try:
-        with open(sys.argv[1], encoding="utf-8") as fh:
-            text = fh.read()
-    except UnicodeDecodeError:
-        print("alerts.yml is not UTF-8 text.")
-        return 2
     import yaml
 
     try:
+        with open(sys.argv[1], encoding="utf-8") as fh:
+            text = fh.read()
         doc = load(text)
+        problems, unsafe = check(doc)
+        canonical = json.dumps(doc, ensure_ascii=True, allow_nan=False) if not unsafe else None
+    except UnicodeDecodeError:
+        print("alerts.yml is not UTF-8 text.")
+        return 2
     except Unsafe as exc:
         print(exc)
         return 2
@@ -124,11 +152,15 @@ def main() -> int:
         where = f" at line {mark.line + 1}" if mark else ""
         print(f"alerts.yml is not valid YAML{where}.")
         return 2
-    problems, unsafe = check(doc)
+    except Exception:  # noqa: BLE001 - anything else stops grading too
+        print("alerts.yml could not be read as plain YAML (mappings, lists, strings and numbers).")
+        return 2
     for problem in problems:
         print(problem)
     if unsafe:
         return 2
+    with open(sys.argv[2], "w", encoding="utf-8") as fh:
+        fh.write(canonical + "\n")
     return 1 if problems else 0
 
 

@@ -13,7 +13,7 @@ The order of the steps is what keeps the grade honest:
 3. The superuser takes that right away again, resets app's role settings,
    and reads the catalogs (with only pg_catalog on its search path): the
    tables, columns and constraints must be as schema.sql made them, and
-   nothing but indexes (and planner statistics objects) may be new. So no
+   nothing but indexes may be new. So no
    function, operator, view, trigger, rule or policy of the submission's
    exists when anything else runs.
 4. Only then does app load the random data. The migration never saw it, so
@@ -149,8 +149,12 @@ def setup(work: Path, passwords: dict[str, str]) -> None:
 def structure(conn: psycopg.Connection) -> dict:
     """Tables, columns and constraints of the shop schema, read as raw catalog rows."""
     ns = conn.execute("SELECT oid FROM pg_namespace WHERE nspname = 'shop'").fetchone()[0]
+    tables = conn.execute(
+        "SELECT relname, relpersistence, reloptions FROM pg_class WHERE relnamespace = %s AND relkind = 'r' ORDER BY 1",
+        [ns]).fetchall()
     columns = conn.execute(
-        "SELECT c.relname, a.attnum, a.attname, a.atttypid, a.atttypmod, a.attnotnull, a.atthasdef, a.attgenerated "
+        "SELECT c.relname, a.attnum, a.attname, a.atttypid, a.atttypmod, a.attnotnull, a.atthasdef, a.attgenerated, "
+        "a.attstattarget, a.attoptions, a.attcollation "
         "FROM pg_class c JOIN pg_attribute a ON a.attrelid = c.oid "
         "WHERE c.relnamespace = %s AND c.relkind = 'r' AND a.attnum > 0 AND NOT a.attisdropped "
         "ORDER BY c.relname, a.attnum", [ns]).fetchall()
@@ -158,11 +162,12 @@ def structure(conn: psycopg.Connection) -> dict:
         "SELECT c.relname, k.conname, k.contype, pg_get_constraintdef(k.oid) "
         "FROM pg_constraint k JOIN pg_class c ON c.oid = k.conrelid "
         "WHERE c.relnamespace = %s ORDER BY 1, 2", [ns]).fetchall()
-    return {"columns": [list(r) for r in columns], "constraints": [list(r) for r in constraints]}
+    return {"tables": [list(r) for r in tables], "columns": [list(r) for r in columns],
+            "constraints": [list(r) for r in constraints]}
 
 
 def leftovers(conn: psycopg.Connection) -> list[str]:
-    """Everything in the shop schema that is not the two tables, an index or a statistics object."""
+    """Everything in the shop schema that is not one of the two tables or an index."""
     ns = conn.execute("SELECT oid FROM pg_namespace WHERE nspname = 'shop'").fetchone()[0]
     tables = [r[0] for r in conn.execute(
         "SELECT oid FROM pg_class WHERE relnamespace = %s AND relkind = 'r' AND relname = ANY(%s)",
@@ -184,6 +189,7 @@ def leftovers(conn: psycopg.Connection) -> list[str]:
         ("a row security policy", "SELECT polname FROM pg_policy WHERE polrelid = ANY(%s)", [tables]),
         ("row level security", "SELECT relname FROM pg_class WHERE oid = ANY(%s) AND (relrowsecurity OR relforcerowsecurity)", [tables]),
         ("a large object", "SELECT oid FROM pg_largeobject_metadata WHERE lomowner = (SELECT oid FROM pg_roles WHERE rolname = 'app')", []),
+        ("a statistics object", "SELECT stxname FROM pg_statistic_ext WHERE stxnamespace = %s", [ns]),
     ]
     for label, query, args in checks:
         for (name,) in conn.execute(query, args).fetchall():
@@ -351,16 +357,20 @@ def run(work: Path) -> dict:
             outcome = {"ok": False, "error": f"did not finish within {MIGRATE_SECONDS} seconds", "timeout": True}
 
     with superuser() as conn:
-        conn.execute("SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE usename = 'app'")
         conn.execute("REVOKE CREATE ON SCHEMA shop FROM app")
         conn.execute("ALTER ROLE app RESET ALL")
+        # A killed migration's session may still be running on the server.
+        # End it, and wait until it is gone, before reading the catalogs.
+        conn.execute("SELECT pg_terminate_backend(pid, 10000) FROM pg_stat_activity WHERE usename = 'app'")
+        if conn.execute("SELECT count(*) FROM pg_stat_activity WHERE usename = 'app'").fetchone()[0]:
+            raise SystemExit("the migration's session did not end")
         found = leftovers(conn)
         changed = structure(conn) != before
     if outcome.get("timeout"):
         results["indexes"] = {"status": "fail", "detail": f"indexes.sql {outcome['error']}."}
         return skip_queries(results, "Skipped: indexes.sql did not finish.")
     if found or changed:
-        what = "; ".join(found[:3]) if found else "the tables, their columns or their constraints changed"
+        what = "; ".join(found[:3]) if found else "changes to the tables (columns, constraints or table settings)"
         results["indexes"] = {"status": "fail", "detail": f"indexes.sql may only create or drop indexes. It left: {what}."}
         return skip_queries(results, "Skipped: indexes.sql made more than indexes.")
     if outcome["ok"]:
@@ -368,7 +378,14 @@ def run(work: Path) -> dict:
     else:
         results["indexes"] = {"status": "fail", "detail": f"indexes.sql failed: {outcome['error']}"}
 
-    load(work, passwords["app"])
+    try:
+        load(work, passwords["app"])
+    except psycopg.Error as exc:
+        # Only the submitted indexes can make the trusted data fail to load,
+        # for example a unique index on a column with repeated values.
+        reason = (exc.diag.message_primary or str(exc))[:150]
+        results["indexes"] = {"status": "fail", "detail": f"With these indexes, the test data does not load: {reason}"}
+        return skip_queries(results, "Skipped: the test data did not load.")
     with superuser() as conn:
         conn.execute("GRANT SELECT ON shop.customers, shop.orders TO reader")
     with connect("reader", passwords["reader"], read_only=True, timeout_ms=LOAD_TIMEOUT_MS) as conn:
