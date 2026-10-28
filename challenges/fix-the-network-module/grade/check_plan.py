@@ -162,6 +162,13 @@ def cmd_compare(show_path: str, answers_path: str, cid: str) -> dict:
         if values.get("tags") != exp["vpc"]["tags"]:
             tags.append(f"For {label}: aws_vpc.this has tags {short(json.dumps(values.get('tags'), sort_keys=True))}.")
 
+    # What the plan cannot know until apply, by resource address.
+    unknown = {}
+    for change in show.get("resource_changes") or []:
+        if isinstance(change, dict) and isinstance(change.get("change"), dict):
+            after_unknown = change["change"].get("after_unknown")
+            unknown[change.get("address")] = after_unknown if isinstance(after_unknown, dict) else {}
+
     planned = {}
     for r in resources:
         if r.get("type") != "aws_subnet":
@@ -187,6 +194,10 @@ def cmd_compare(show_path: str, answers_path: str, cid: str) -> dict:
         if values.get("cidr_block") != want[key]["cidr"]:
             subnets.append(f"For {label}: {address} has cidr_block {short(str(values.get('cidr_block')))}, "
                            f"expected {want[key]['cidr']}.")
+        # A subnet in the new VPC gets the VPC's ID, which only exists after
+        # apply. A vpc_id the plan already knows is some other VPC.
+        if (unknown.get(planned[key].get("address")) or {}).get("vpc_id") is not True:
+            subnets.append(f"For {label}: {address} is not in aws_vpc.this.")
         if values.get("map_public_ip_on_launch") is not want[key]["public_ip"]:
             subnets.append(f"For {label}: {address} has map_public_ip_on_launch {short(json.dumps(values.get('map_public_ip_on_launch')))}.")
         if values.get("tags") != want[key]["tags"]:

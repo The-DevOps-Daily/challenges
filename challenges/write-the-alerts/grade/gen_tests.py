@@ -236,27 +236,52 @@ def targets_missing(gen: Gen) -> list[tuple[str, dict]]:
 # --- CheckoutHighErrorRate ---------------------------------------------------
 
 
-def request_series(gen: Gen, job: str, instances: list[str], weights: list[float], length: int, phases) -> list:
+# Status code mixes. Errors are not always 500s: a broken upstream gives
+# 502, 503 and 504, and clients get 400, 404 and 429.
+FIVE_XX = [{"500": 1.0}, {"500": 0.6, "503": 0.4}, {"502": 0.5, "503": 0.3, "504": 0.2}, {"503": 1.0},
+           {"504": 0.6, "502": 0.4}]
+# A broken upstream: no 500 at all, and no single code above 5% of requests,
+# so only a rule that counts every 5xx code sees the outage.
+UPSTREAM = {"502": 1 / 3, "503": 1 / 3, "504": 1 / 3}
+FOUR_XX = [{"404": 1.0}, {"400": 0.3, "404": 0.5, "429": 0.2}, {"429": 1.0}, {"401": 0.4, "404": 0.6}]
+
+
+def request_series(gen: Gen, job: str, instances: list[str], weights: list[float], length: int, phases,
+                   codes5: dict[str, float] | None = None, codes4: dict[str, float] | None = None) -> list:
     """http_requests_total series for one job.
 
     phases(minute) -> (requests per second for the whole job, 5xx ratio, 4xx ratio, per-instance overrides)
-    where overrides maps an instance to its own 5xx ratio.
+    where overrides maps an instance to its own 5xx ratio. codes5 and codes4
+    split the 5xx and 4xx answers between status codes.
     """
+    codes5 = codes5 or gen.rng.choice(FIVE_XX)
+    codes4 = codes4 or gen.rng.choice(FOUR_XX)
     routes = [(CHECKOUT, 0.5), ("/api/cart", 0.3), ("/api/products", 0.2)]
     series = []
     for inst, w in zip(instances, weights):
         for route, rw in routes:
-            for code in ("200", "404", "500", "503"):
+            for code in ["200", *codes4, *codes5]:
                 incs = []
                 for minute in range(length - 1):
                     rps, p5, p4, over = phases(minute)
                     p5 = over.get(inst, p5)
                     n = rps * 60 * w * rw
-                    share = {"200": 1 - p5 - p4, "404": p4, "500": p5 * 0.6, "503": p5 * 0.4}[code]
+                    share = 1 - p5 - p4 if code == "200" else p4 * codes4.get(code, 0) + p5 * codes5.get(code, 0)
                     incs.append(n * share)
                 series.append((labels("http_requests_total", job=job, instance=inst, route=route, code=code),
                                counter(incs, 0.05, gen)))
     return series
+
+
+def healthy_job(gen: Gen, job: str, rps: float, length: int) -> list:
+    """Another service on the same Prometheus, with a lot of traffic and almost no errors."""
+    insts = [gen.instance() for _ in range(2)]
+    return request_series(gen, job, insts, weights(gen, 2), length, lambda m: (rps, 0.002, 0.02, {}))
+
+
+def codes_text(codes: dict[str, float]) -> str:
+    names = sorted(codes)
+    return names[0] if len(names) == 1 else ", ".join(names[:-1]) + " and " + names[-1]
 
 
 def weights(gen: Gen, n: int) -> list[float]:
@@ -270,17 +295,32 @@ def error_rate(gen: Gen) -> list[tuple[str, dict]]:
     exp = [{"alertname": alert, "severity": "page"}]
     out = []
 
-    # A bad deploy: 10 to 25% of requests fail from minute t0 on.
+    # A bad deploy: 10 to 25% of requests fail from minute t0 on. A busy,
+    # healthy service shares the Prometheus.
     insts = [gen.instance() for _ in range(3)]
     rps, base5, bad5, p4 = gen.uniform(8, 30), gen.uniform(0, 0.01), gen.uniform(0.10, 0.25), gen.uniform(0.02, 0.08)
     t0 = gen.randint(7, 10)
     length = t0 + 17
+    codes = gen.rng.choice(FIVE_XX)
     series = request_series(gen, JOB, insts, weights(gen, 3), length,
-                            lambda m: (rps, bad5 if m >= t0 else base5, p4, {}))
+                            lambda m: (rps, bad5 if m >= t0 else base5, p4, {}), codes5=codes)
+    series += healthy_job(gen, "payments", rps * gen.uniform(3, 5), length)
     out.append((
-        f"when {bad5:.0%} of requests fail with a 5xx at {rps:.0f} requests per second, it alerts after 5 minutes "
-        "(not in the first 2), with severity page",
+        f"when {bad5:.0%} of checkout requests fail with {codes_text(codes)} at {rps:.0f} requests per second, "
+        "it alerts after 5 minutes (not in the first 2), with severity page, even next to a busy healthy service",
         test_file("", "bad deploy", series, [(q, t0 - 1, []), (q, t0 + 2, []), (q, t0 + 12, exp), (q, t0 + 15, exp)]),
+    ))
+
+    # An upstream breaks: the errors are 502, 503 and 504, no 500 at all.
+    insts = [gen.instance() for _ in range(3)]
+    rps, bad5, p4 = gen.uniform(8, 30), gen.uniform(0.09, 0.12), gen.uniform(0.02, 0.08)
+    t0 = gen.randint(7, 10)
+    length = t0 + 17
+    series = request_series(gen, JOB, insts, weights(gen, 3), length,
+                            lambda m: (rps, bad5 if m >= t0 else 0.0, p4, {}), codes5=UPSTREAM)
+    out.append((
+        f"when {bad5:.0%} of requests fail, split between 502, 503 and 504 with no 500, it alerts after 5 minutes",
+        test_file("", "upstream down", series, [(q, t0 - 1, []), (q, t0 + 12, exp), (q, t0 + 15, exp)]),
     ))
 
     # A steady 1 to 3% of 5xx, while another job fails a lot.
@@ -335,7 +375,7 @@ TAIL = [0.80, 0.08, 0, 0, 0, 0.12, 0, 0]
 SLOW = [0, 0, 0, 0, 0, 1.0, 0, 0]
 
 
-def histogram_series(gen: Gen, inst: str, route: str, length: int, rpm, dist) -> list:
+def histogram_series(gen: Gen, inst: str, route: str, length: int, rpm, dist, job: str = JOB) -> list:
     """Bucket, _sum and _count series for one instance and route.
 
     rpm(minute) is requests per minute, dist(minute) the share per bucket.
@@ -355,20 +395,20 @@ def histogram_series(gen: Gen, inst: str, route: str, length: int, rpm, dist) ->
             cumulative[i][m] = sum(noisy[j][m] for j in range(i + 1))
     out = []
     for le, incs in zip(BUCKETS, cumulative):
-        out.append((labels("http_request_duration_seconds_bucket", job=JOB, instance=inst, route=route, le=le),
+        out.append((labels("http_request_duration_seconds_bucket", job=job, instance=inst, route=route, le=le),
                     counter(incs, 0, gen)))
     count = counter(cumulative[-1], 0, gen)
     total, sum_pts = 0.0, [0.0]
     for s in sums:
         total += s
         sum_pts.append(round(total, 3))
-    out.append((labels("http_request_duration_seconds_count", job=JOB, instance=inst, route=route), count))
-    out.append((labels("http_request_duration_seconds_sum", job=JOB, instance=inst, route=route), sum_pts))
+    out.append((labels("http_request_duration_seconds_count", job=job, instance=inst, route=route), count))
+    out.append((labels("http_request_duration_seconds_sum", job=job, instance=inst, route=route), sum_pts))
     return out
 
 
-def latency_series(gen: Gen, length: int, rps: float, dist_for, inst_weights=None) -> list:
-    """Histograms for /api/checkout and /api/cart on each instance.
+def latency_series(gen: Gen, length: int, rps: float, dist_for, inst_weights=None, job: str = JOB) -> list:
+    """Histograms for /api/checkout and /api/cart on each instance of a job.
 
     dist_for(minute, instance_index, route) gives the bucket shares.
     """
@@ -378,7 +418,7 @@ def latency_series(gen: Gen, length: int, rps: float, dist_for, inst_weights=Non
         inst = gen.instance()
         for route, rw in ((CHECKOUT, 0.6), ("/api/cart", 0.4)):
             series += histogram_series(gen, inst, route, length, lambda m, iw=iw, rw=rw: rps * 60 * iw * rw,
-                                       lambda m, idx=idx, route=route: dist_for(m, idx, route))
+                                       lambda m, idx=idx, route=route: dist_for(m, idx, route), job=job)
     return series
 
 
@@ -388,18 +428,30 @@ def slow_requests(gen: Gen) -> list[tuple[str, dict]]:
     exp = [{"alertname": alert, "severity": "ticket"}]
     out = []
 
+    # Another service has its own fast /api/checkout route with much more
+    # traffic: mixed in, it would hide the slowdown.
     rps = gen.uniform(5, 20)
     t0 = gen.randint(7, 10)
     length = t0 + 21
     series = latency_series(gen, length, rps,
-                               lambda m, idx, route: TAIL if route == CHECKOUT and m >= t0 else FAST)
+                            lambda m, idx, route: TAIL if route == CHECKOUT and m >= t0 else FAST)
+    series += latency_series(gen, length, rps * gen.uniform(4, 6), lambda m, idx, route: FAST, job="payments")
     out.append((
-        "when 12% of /api/checkout requests take over a second (p95 well over 500 ms, average under it), "
-        "it alerts after 10 minutes, with severity ticket",
+        "when 12% of checkout's /api/checkout requests take over a second (p95 well over 500 ms, average under "
+        "it), it alerts after 10 minutes, with severity ticket, even next to a busy fast service",
         test_file("", "slow checkout", series, [(q, t0 - 1, []), (q, t0 + 5, []), (q, t0 + 16, exp), (q, t0 + 19, exp)]),
     ))
 
+    # Another service's /api/checkout is slow; checkout's is fast.
     length = 26
+    series = latency_series(gen, length, gen.uniform(5, 20), lambda m, idx, route: FAST)
+    series += latency_series(gen, length, gen.uniform(5, 20), lambda m, idx, route: SLOW if route == CHECKOUT else FAST,
+                             job="payments")
+    out.append((
+        "a slow /api/checkout route of another job does not alert",
+        test_file("", "other job slow", series, [(q, t, []) for t in (10, 16, 22, 25)]),
+    ))
+
     series = latency_series(gen, length, gen.uniform(5, 20), lambda m, idx, route: FAST)
     out.append((
         "fast requests (p95 around 100 ms) do not alert",
@@ -421,14 +473,18 @@ def slow_requests(gen: Gen) -> list[tuple[str, dict]]:
         test_file("", "one slow instance", series, [(q, t, []) for t in (10, 16, 22, 25)]),
     ))
 
+    # 15% slow requests for 7 minutes. With one sample a minute, a 5-minute
+    # rate window holds 4 intervals: one slow interval is 3.75% (p95 stays
+    # fast), two are 7.5%. So p95 is high for about 7 minutes: a rule with a
+    # 5-minute "for" fires, one with 10 minutes does not.
     t0 = gen.randint(7, 10)
-    length = t0 + 16
-    short = [0.75, 0.05, 0, 0, 0, 0.20, 0, 0]
+    length = t0 + 20
+    short = [0.80, 0.05, 0, 0, 0, 0.15, 0, 0]
     series = latency_series(gen, length, gen.uniform(5, 20),
-                               lambda m, idx, route: short if route == CHECKOUT and t0 <= m < t0 + 4 else FAST)
+                            lambda m, idx, route: short if route == CHECKOUT and t0 <= m < t0 + 7 else FAST)
     out.append((
-        "a 4-minute slowdown does not alert: it has to last 10 minutes",
-        test_file("", "short slowdown", series, [(q, t0 + t, []) for t in (5, 6.5, 7, 8, 10, 14)]),
+        "a 7-minute slowdown does not alert: it has to last 10 minutes",
+        test_file("", "short slowdown", series, [(q, t0 + t, []) for t in (5, 7, 8, 9, 10, 11, 12, 14, 18)]),
     ))
     return out
 

@@ -19,10 +19,12 @@ The order of the steps is what keeps the grade honest:
 4. Only then does app load the random data. The migration never saw it, so
    it could not prepare answers.
 5. The "reader" role picks random parameters, computes the expected rows with
-   the original queries, and runs the submitted queries: SELECT only,
-   read-only transactions, a statement timeout, a new session for each, and
-   always with a parameter, so the extended protocol carries one statement.
-   The parameters and expected rows only exist in this process.
+   the original queries, and runs the submitted queries. reader may only read
+   the two tables (and keep temporary tables), each run gets a new session
+   and a statement timeout, and a query is always sent with its parameter,
+   so the extended protocol carries exactly one statement. The rows that are
+   checked and the pages that are counted come from the same execution. The
+   parameters and expected rows only exist in this process.
 """
 
 from __future__ import annotations
@@ -60,6 +62,7 @@ QUERIES = {
     "orders-for-customer": {
         "file": "queries/orders_for_customer.sql",
         "max_pages": 60,
+        "ordered": True,
         "reference": (
             "SELECT id, status, total_cents, created_at FROM orders "
             "WHERE customer_id = $1 ORDER BY created_at DESC, id DESC LIMIT 20"
@@ -68,11 +71,13 @@ QUERIES = {
     "find-customer": {
         "file": "queries/find_customer.sql",
         "max_pages": 20,
+        "ordered": False,
         "reference": "SELECT id, email, name FROM customers WHERE lower(email) = lower($1)",
     },
     "revenue-for-day": {
         "file": "queries/revenue_for_day.sql",
         "max_pages": 100,
+        "ordered": False,
         "reference": (
             "SELECT count(*) AS orders, coalesce(sum(total_cents), 0) AS revenue_cents FROM orders "
             "WHERE created_at::date = $1 AND status = 'paid'"
@@ -136,6 +141,8 @@ def setup(work: Path, passwords: dict[str, str]) -> None:
         # Nobody else may create schemas, objects in public or temporary objects.
         conn.execute("REVOKE ALL ON DATABASE shop FROM PUBLIC")
         conn.execute("GRANT CONNECT ON DATABASE shop TO app, reader")
+        # reader keeps each query's rows in a temporary table (see check_query).
+        conn.execute("GRANT TEMPORARY ON DATABASE shop TO reader")
         conn.execute("REVOKE ALL ON SCHEMA public FROM PUBLIC")
         conn.execute("CREATE SCHEMA shop")
         conn.execute("GRANT USAGE ON SCHEMA shop TO app, reader")
@@ -296,24 +303,30 @@ def check_query(work: Path, spec: dict, params: list, expected: dict, password: 
 
     worst_pages, worst_param, scans = -1, None, set()
     for param in params:
+        # One execution gives both the rows and the page count: EXPLAIN
+        # ANALYZE runs the query once and keeps its rows in a temporary table.
+        # A query cannot behave one way when its rows are checked and another
+        # way when its pages are counted.
+        table = f"grader_{secrets.token_hex(6)}"
         try:
-            with connect("reader", password, read_only=True) as conn:
-                names, rows = run_query(conn, query, param)
+            with connect("reader", password) as conn:
+                cur = psycopg.RawCursor(conn)
+                cur.execute(f"EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) CREATE TEMPORARY TABLE {table} AS " + query,
+                            [bind(param)], prepare=False)
+                doc = cur.fetchone()[0]
+                cur.execute(f"SELECT * FROM pg_temp.{table}", None)
+                names = [d.name for d in cur.description or []]
+                rows = cur.fetchall()
         except psycopg.Error as exc:
             return "fail", f"The query failed for {shown(param)}: {(exc.diag.message_primary or str(exc))[:150]}"
         want_names, want_rows = expected[str(param)]
         if names != want_names:
             return "fail", f"The query returns the columns {', '.join(names)[:100]}; the app expects {', '.join(want_names)}."
+        if not spec["ordered"]:
+            rows, want_rows = sorted(rows, key=repr), sorted(want_rows, key=repr)
         if rows != want_rows:
             return "fail", (f"The query returns different rows than the original query for {shown(param)} "
                             f"({len(rows)} rows, expected {len(want_rows)}).")
-        try:
-            with connect("reader", password, read_only=True) as conn:
-                cur = psycopg.RawCursor(conn)
-                cur.execute("EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) " + query, [bind(param)], prepare=False)
-                doc = cur.fetchone()[0]
-        except psycopg.Error as exc:
-            return "fail", f"EXPLAIN ANALYZE failed for {shown(param)}: {(exc.diag.message_primary or str(exc))[:150]}"
         plan = doc[0].get("Plan", {}) if isinstance(doc, list) and doc and isinstance(doc[0], dict) else {}
         pages = plan_pages(plan)
         scans.update(seq_scans(plan))

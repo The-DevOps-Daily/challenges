@@ -54,9 +54,9 @@ The grader runs Terraform 1.16 with the AWS provider 6.68 in a container with no
 | Check | Passes when |
 | --- | --- |
 | Formatted and valid | `terraform init` works with no network and only the AWS provider, `terraform validate` passes, and `terraform fmt` has nothing to change in `main.tf`, `variables.tf` and `outputs.tf`. |
-| The module's tests pass | `terraform test` passes every run in `tests/network.tftest.hcl`. The tests use a mock AWS provider. |
-| Inputs are validated | Eight random bad inputs, two each for `name`, `environment`, `vpc_cidr` and `azs`, are each rejected by a validation rule, and three random sets of good inputs plan without errors. |
-| Subnets for random inputs | For three random sets of good inputs, the plan has `aws_vpc.this` with DNS turned on, and one public and one private subnet per AZ, keyed by AZ name, with the range the AZ letter picks. The outputs map AZs to subnet ranges and IDs. |
+| The module's tests pass | `terraform test` passes every run in `tests/network.tftest.hcl`. The tests use a mock AWS provider, and one of them gives the VPC and subnets known IDs to check the outputs and that every subnet is in the VPC. |
+| Inputs are validated | For every rule in the inputs table, a random value that breaks it (20 in all) is rejected by a validation rule, and three random sets of good inputs plan without errors. |
+| Subnets for random inputs | For three random sets of good inputs, the plan has `aws_vpc.this` with DNS turned on, and one public and one private subnet per AZ in that VPC, keyed by AZ name, with the range the AZ letter picks. The outputs map AZs to subnet ranges and IDs. |
 | Tags | In the same plans, the VPC and every subnet have the caller's tags plus `Name`, `Environment`, `ManagedBy` and, on subnets, `Tier`, and the module's values win. |
 
 The random inputs are new for every run: names, environments, VPC ranges from all three private ranges, regions, AZ letters in any order, and caller tags (sometimes with a `Name` or `Environment` of their own). When a check fails, the grader says which input it used and what it saw.
@@ -103,7 +103,7 @@ A function such as `cidrhost()` fails on a value that is not a CIDR block. `can(
 
 ## Test it locally
 
-You need Terraform 1.9 or later. You do not need an AWS account: the tests use a mock provider. From this folder:
+You need Terraform 1.11 or later. You do not need an AWS account: the tests use a mock provider. From this folder:
 
 ```bash
 terraform init

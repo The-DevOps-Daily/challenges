@@ -116,6 +116,97 @@ run "small_vpc" {
   }
 }
 
+run "outputs_hold_the_ids" {
+  command = plan
+
+  # IDs only exist after apply. These overrides give the VPC and the
+  # subnets known IDs during plan, so the outputs and the subnets' vpc_id
+  # can be compared with them.
+  override_resource {
+    target          = aws_vpc.this
+    override_during = plan
+    values = {
+      id = "vpc-0123456789abcdef0"
+    }
+  }
+
+  override_resource {
+    target          = aws_subnet.public["eu-west-1a"]
+    override_during = plan
+    values = {
+      id = "subnet-0aaaaaaaaaaaaaaa1"
+    }
+  }
+
+  override_resource {
+    target          = aws_subnet.public["eu-west-1b"]
+    override_during = plan
+    values = {
+      id = "subnet-0aaaaaaaaaaaaaaa2"
+    }
+  }
+
+  override_resource {
+    target          = aws_subnet.public["eu-west-1c"]
+    override_during = plan
+    values = {
+      id = "subnet-0aaaaaaaaaaaaaaa3"
+    }
+  }
+
+  override_resource {
+    target          = aws_subnet.private["eu-west-1a"]
+    override_during = plan
+    values = {
+      id = "subnet-0bbbbbbbbbbbbbbb1"
+    }
+  }
+
+  override_resource {
+    target          = aws_subnet.private["eu-west-1b"]
+    override_during = plan
+    values = {
+      id = "subnet-0bbbbbbbbbbbbbbb2"
+    }
+  }
+
+  override_resource {
+    target          = aws_subnet.private["eu-west-1c"]
+    override_during = plan
+    values = {
+      id = "subnet-0bbbbbbbbbbbbbbb3"
+    }
+  }
+
+  assert {
+    condition     = output.vpc_id == "vpc-0123456789abcdef0"
+    error_message = "vpc_id is not the ID of aws_vpc.this."
+  }
+
+  assert {
+    condition     = alltrue([for subnet in concat(values(aws_subnet.public), values(aws_subnet.private)) : subnet.vpc_id == "vpc-0123456789abcdef0"])
+    error_message = "Every subnet must be in aws_vpc.this."
+  }
+
+  assert {
+    condition = output.public_subnet_ids == {
+      "eu-west-1a" = "subnet-0aaaaaaaaaaaaaaa1"
+      "eu-west-1b" = "subnet-0aaaaaaaaaaaaaaa2"
+      "eu-west-1c" = "subnet-0aaaaaaaaaaaaaaa3"
+    }
+    error_message = "public_subnet_ids does not map each AZ to the ID of its public subnet."
+  }
+
+  assert {
+    condition = output.private_subnet_ids == {
+      "eu-west-1a" = "subnet-0bbbbbbbbbbbbbbb1"
+      "eu-west-1b" = "subnet-0bbbbbbbbbbbbbbb2"
+      "eu-west-1c" = "subnet-0bbbbbbbbbbbbbbb3"
+    }
+    error_message = "private_subnet_ids does not map each AZ to the ID of its private subnet."
+  }
+}
+
 run "tags" {
   command = plan
 
