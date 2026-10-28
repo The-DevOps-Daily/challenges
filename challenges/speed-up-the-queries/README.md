@@ -99,7 +99,7 @@ To run the grader itself against that server (it creates the database, so drop `
 
 ```bash
 psql -c 'DROP DATABASE shop'
-python3 -m venv /tmp/grader && /tmp/grader/bin/pip install 'psycopg[binary]'
+python3 -m venv /tmp/grader && /tmp/grader/bin/pip install 'psycopg[binary]==3.3.6' pglast==8.7
 /tmp/grader/bin/python grade/grade_db.py run .
 docker rm -f shop-db
 ```
