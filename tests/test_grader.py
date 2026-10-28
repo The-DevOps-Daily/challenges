@@ -492,13 +492,23 @@ class FileFunctionScanTests(unittest.TestCase):
             'x = <<EOT\n${templatefile("t", {})}\nEOT\n': ["templatefile"],
             # A heredoc with a delimiter in another script hides nothing.
             'pad = <<\u00c9\n"\n\u00c9\nstolen = file("/etc/hostname")': ["file"],
+            # After a minus sign: subtraction and unary minus are real calls.
+            'x = 1-file("a")': ["file"],
+            'x = -file("a")': ["file"],
+            'x = 1 - fileexists("a") ? 1 : 0': ["fileexists"],
+            'x = 1-file /* c */ ("a")': ["file"],
+            'x = -templatefile # c\n ("t", {})': ["templatefile"],
+            'x = 1-file // c\n ("a")': ["file"],
+            # An identifier with a hyphen is not a call, but is reported anyway.
+            'x = a-b-file("a")': ["file"],
+            'x = a-b-file /* c */ ("a")': ["file"],
         }
         for src, want in cases.items():
             self.assertEqual(hclscan.calls(src), want, src)
 
     def test_text_that_looks_like_a_call_counts_and_other_names_do_not(self):
         self.assertEqual(hclscan.calls('description = "the file (if any)"'), ["file"])
-        for src in ('x = profile(1)', 'x = my-file(1)', 'x = "file name"'):
+        for src in ('x = profile(1)', 'x = file_name(1)', 'x = "file name"', 'x = filed(1)'):
             self.assertEqual(hclscan.calls(src), [], src)
 
     def test_reference_style_module_has_no_calls(self):

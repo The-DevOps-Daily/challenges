@@ -20,10 +20,12 @@ import sys
 
 FUNCTIONS = ("file", "fileexists", "fileset", "filebase64", "filebase64sha256", "filebase64sha512", "filemd5",
              "filesha1", "filesha256", "filesha512", "templatefile")
-# Not preceded by another identifier character (HCL identifiers may hold
-# letters of any script, digits, _ and -), so "profile(" is not "file(".
+# Not preceded by a letter, digit or _, so "profile(" is not "file(". A "-"
+# before the name does not count: "1-file(" and "-file(" are real calls, and
+# an identifier such as "my-file(" is reported too, which only errs on the
+# safe side.
 CALL_RE = re.compile(
-    r"(?<![\w-])(" + "|".join(FUNCTIONS) + r")(?:\s|/\*.*?\*/|#[^\n]*|//[^\n]*)*\(",
+    r"(?<!\w)(" + "|".join(FUNCTIONS) + r")(?:\s|/\*.*?\*/|#[^\n]*|//[^\n]*)*\(",
     re.DOTALL,
 )
 
