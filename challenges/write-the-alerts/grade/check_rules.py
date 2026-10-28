@@ -102,6 +102,11 @@ def check(doc) -> tuple[list[str], bool]:
             return ["Every group needs a name and a list of rules."], True
         if set(group) - GROUP_KEYS:
             problems.append(f"Group {group.get('name')!s:.40} has unknown keys.")
+        # promtool's tests evaluate every group each minute, whatever its
+        # interval, so an interval of its own would never be tested.
+        if "interval" in group:
+            problems.append(f"Group {group.get('name')!s:.40} sets its own interval. Leave it out, so the rules run at "
+                            "the global evaluation interval.")
         if isinstance(group.get("labels"), dict) and set(group["labels"]) & RESERVED_LABELS:
             return [f"Group {group.get('name')!s:.40} sets a label that Prometheus reserves for alerts."], True
         for rule in group["rules"]:

@@ -10,7 +10,8 @@ The order of the steps is what keeps the grade honest:
    by the "app" role.
 2. PostgreSQL's own parser (pglast) splits indexes.sql into statements, and
    a statement other than CREATE INDEX or DROP INDEX stops the grading. Then
-   the file runs as app, on the empty tables. app may create objects in the
+   the statements run one at a time as app, on the empty tables (each in its
+   own transaction, so CREATE INDEX CONCURRENTLY works). app may create objects in the
    shop schema only for this step, because CREATE INDEX needs it.
 3. The superuser takes that right away again, resets app's role settings,
    and reads the catalogs (with only pg_catalog on its search path): the
@@ -47,7 +48,7 @@ from psycopg.types.numeric import Int8
 
 # grade.sh runs this file with python -I, which leaves its folder off sys.path.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from sqlcheck import migration_problem, plain_query, plan_pages, seq_scans  # noqa: E402
+from sqlcheck import migration_problem, plain_query, plan_pages, seq_scans, split_statements  # noqa: E402
 
 DATABASE = "shop"
 TABLE_COLUMNS = {
@@ -229,9 +230,11 @@ def migrate(path: str) -> int:
         return 0
     try:
         with connect("app", os.environ["APP_PASSWORD"], timeout_ms=MIGRATE_SECONDS * 1000) as conn:
-            # No parameters, so the simple protocol: the file may hold several
-            # statements, and they run as one transaction.
-            conn.execute(text)
+            # One statement at a time, in autocommit mode. run() has already
+            # checked that each is CREATE INDEX or DROP INDEX, and the whole
+            # migration has one deadline (the timeout of this process).
+            for statement in split_statements(text):
+                conn.execute(statement)
     except psycopg.Error as exc:
         diag = exc.diag
         print(json.dumps({"ok": False, "error": f"{diag.sqlstate or ''} {diag.message_primary or str(exc)}"[:200]}))

@@ -76,6 +76,17 @@ def migration_problem(text: str) -> str | None:
     return None
 
 
+def split_statements(text: str) -> list[str]:
+    """The statements of a file, cut where PostgreSQL's parser says they start and end."""
+    from pglast import parse_sql
+
+    out = []
+    for raw in parse_sql(text):
+        start = raw.stmt_location or 0
+        out.append(text[start:start + raw.stmt_len] if raw.stmt_len else text[start:])
+    return out
+
+
 def plan_pages(plan: dict) -> int:
     """8 kB pages the query touched: shared, local and temporary, read or hit."""
     keys = ("Shared Hit Blocks", "Shared Read Blocks", "Local Hit Blocks", "Local Read Blocks",

@@ -323,6 +323,15 @@ class AlertRuleShapeTests(unittest.TestCase):
         self.assertFalse(unsafe)
         self.assertIn("keep_firing_for", " ".join(problems))
 
+    def test_group_interval_is_refused(self):
+        # promtool's tests evaluate every group each minute, whatever its interval.
+        def interval(doc):
+            doc["groups"][0]["interval"] = "24h"
+
+        problems, unsafe = rules(interval)
+        self.assertFalse(unsafe)
+        self.assertIn("own interval", " ".join(problems))
+
     def test_severity_can_come_from_the_group(self):
         def group_severity(doc):
             doc["groups"][0]["labels"] = {"severity": "page"}
@@ -600,6 +609,10 @@ class QueryGateTests(unittest.TestCase):
             self.assertIsNone(sqlcheck.migration_problem(text), text)
         for text in bad:
             self.assertIsNotNone(sqlcheck.migration_problem(text), text)
+        self.assertEqual(sqlcheck.split_statements("-- \u00e9 note\nCREATE INDEX CONCURRENTLY a ON orders (id);\n"
+                                                   "/* \u00df */ DROP INDEX CONCURRENTLY b; -- end\n"),
+                         ["CREATE INDEX CONCURRENTLY a ON orders (id)", "DROP INDEX CONCURRENTLY b"])
+        self.assertEqual(sqlcheck.split_statements("-- only a comment\n/* and another */"), [])
         self.assertIn("Statement 2 is UPDATE ORDERS",
                       sqlcheck.migration_problem("CREATE INDEX a ON orders (id); UPDATE orders SET status = 'x'"))
 
