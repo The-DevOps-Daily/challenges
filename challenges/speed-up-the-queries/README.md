@@ -13,7 +13,7 @@ The database team left a note on the ticket: "Add indexes, but not one on every 
 `schema.sql` creates two tables:
 
 - `customers (id, email, name, created_at)`, with an index on `email`,
-- `orders (id, customer_id, status, total_cents, created_at)`, with an index on `created_at`.
+- `orders (id, customer_id, status, total_cents, created_at)`, with an index on `created_at`, and more statistics on `customer_id` than PostgreSQL keeps by default.
 
 `seed.sql` fills them with test data like production's: 50,000 customers and about 408,000 orders placed during 2026. Customers 1 to 5 are large businesses with about 24,000 orders each, customers 6 to 105 are regular businesses with about 800 each, and everyone else has a handful. Most orders are stored in the order they were placed, but 2% came in later from an import, in batches of orders with the same timestamp, so a higher ID is not always a newer order. People typed their email addresses in any mix of upper and lower case, and a few addresses belong to two customers who typed them differently.
 
