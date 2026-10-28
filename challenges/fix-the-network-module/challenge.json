@@ -10,7 +10,7 @@
     {
       "id": "fmt-validate",
       "name": "Formatted and valid",
-      "description": "terraform init works with no network and only the AWS provider, terraform validate passes, and terraform fmt has nothing to change in main.tf, variables.tf and outputs.tf."
+      "description": "The module calls no file function, terraform init works with no network and only the AWS provider, terraform validate passes, and terraform fmt has nothing to change in main.tf, variables.tf and outputs.tf."
     },
     {
       "id": "module-tests",
@@ -25,7 +25,7 @@
     {
       "id": "subnets",
       "name": "Subnets for random inputs",
-      "description": "For three random sets of good inputs, the plan has aws_vpc.this with DNS turned on, and one public and one private subnet per AZ in that VPC, keyed by AZ name, with the range the AZ letter picks. The outputs map AZs to subnet ranges and IDs."
+      "description": "For three random sets of good inputs, the plan has aws_vpc.this with DNS turned on, and one public and one private subnet per AZ in that VPC, keyed by AZ name, with the range the AZ letter picks. The outputs map AZs to subnet ranges and IDs, checked with random mocked IDs in a test written for each run."
     },
     {
       "id": "tags",

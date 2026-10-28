@@ -15,7 +15,7 @@ The database team left a note on the ticket: "Add indexes, but not one on every 
 - `customers (id, email, name, created_at)`, with an index on `email`,
 - `orders (id, customer_id, status, total_cents, created_at)`, with an index on `created_at`.
 
-`seed.sql` fills them with test data like production's: 50,000 customers and 400,000 orders placed during 2026, stored in the order they were placed. Customers 1 to 5 are large businesses with about 24,000 orders each, customers 6 to 105 are regular businesses with about 800 each, and everyone else has a handful. People typed their email addresses in any mix of upper and lower case.
+`seed.sql` fills them with test data like production's: 50,000 customers and about 408,000 orders placed during 2026. Customers 1 to 5 are large businesses with about 24,000 orders each, customers 6 to 105 are regular businesses with about 800 each, and everyone else has a handful. Most orders are stored in the order they were placed, but 2% came in later from an import, in batches of orders with the same timestamp, so a higher ID is not always a newer order. People typed their email addresses in any mix of upper and lower case, and a few addresses belong to two customers who typed them differently.
 
 ## The queries
 
@@ -32,7 +32,7 @@ Make each query read only a few pages of the database (8 kB blocks), and return 
 - Put indexes in `indexes.sql`. It runs once, as the app's database user, right after `schema.sql`, while the tables are still empty. It may create and drop indexes, and nothing else: no new tables, columns, views, functions, triggers or other objects, and no other changes to the tables.
 - You may rewrite the queries. Each must stay one `SELECT` statement that takes the same `$1`, and returns the same columns and the same rows in the same order as the original query, for any data.
 
-The limits: 60 pages for the order history, 20 for the email lookup and 100 for the revenue of a day. For comparison, reading all of `orders` is about 3,300 pages, and all of `customers` about 560.
+The limits: 60 pages for the order history, 20 for the email lookup and 200 for the revenue of a day. For comparison, reading all of `orders` is about 3,400 pages, and all of `customers` about 560.
 
 ## What the grader checks
 
@@ -41,9 +41,9 @@ The grader starts PostgreSQL 18.6 in a container with no network. It runs `schem
 | Check | Passes when |
 | --- | --- |
 | The migration runs | `indexes.sql` runs without errors as the app's database user, on the empty tables, within 2 minutes, and leaves only indexes behind. The tables, columns and constraints stay as they are, and there are no new functions, views, triggers or other objects. |
-| Order history | For 5 random customers (large, regular and small), the query returns the same rows as the original, and reads at most 60 pages. |
-| Find a customer by email | For 5 random email addresses in random upper and lower case, one of them unknown, the query returns the same rows as the original, and reads at most 20 pages. |
-| Revenue for a day | For 4 random days, one of them with no orders, the query returns the same totals as the original, and reads at most 100 pages. |
+| Order history | For random customers (large, regular, small, and one with two orders at the same time among its newest), the query returns the same rows in the same order as the original, and reads at most 60 pages. |
+| Find a customer by email | For 5 random email addresses in random upper and lower case, one of them shared by two customers and one unknown, the query returns the same rows as the original, and reads at most 20 pages. |
+| Revenue for a day | For 4 random days, one of them with no orders, the query returns the same totals as the original, and reads at most 200 pages. |
 
 When a check fails, the grader says which value it used, how many pages the query read, and whether it scanned a whole table.
 

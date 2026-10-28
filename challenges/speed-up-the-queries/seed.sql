@@ -1,9 +1,12 @@
--- Test data: 50,000 customers and 400,000 orders placed during 2026, in the
--- order they were placed. Customers 1 to 5 are large businesses with about
--- 24,000 orders each, customers 6 to 105 are regular businesses with about
--- 800 each, and everyone else has a handful. People type their email
--- addresses in any case, and nothing in an address gives away the
--- customer's ID.
+-- Test data: 50,000 customers and about 408,000 orders placed during 2026.
+-- Customers 1 to 5 are large businesses with about 24,000 orders each,
+-- customers 6 to 105 are regular businesses with about 800 each, and
+-- everyone else has a handful. Most orders are stored in the order they were
+-- placed; 2% came later from an import, in batches of three orders of one
+-- customer with the same timestamp, so a higher ID does not always mean a
+-- newer order. People type their email addresses in any case, nothing in an
+-- address gives away the customer's ID, and about 1% of addresses belong to
+-- two customers that typed them in different case.
 --
 -- The grader runs SELECT setseed(...) with a random value first, so the data
 -- is different for every run.
@@ -39,3 +42,27 @@ SELECT i,
        500 + floor(random() * 49500)::int,
        timestamptz '2026-01-01 00:00:00+00' + (i - 1 + random()) * interval '78.84 seconds'
 FROM (SELECT i, random() AS c, random() AS r FROM generate_series(1, 400000) AS i) AS o;
+
+-- The import: batches of three orders with the same customer and timestamp.
+INSERT INTO orders (id, customer_id, status, total_cents, created_at)
+SELECT 400000 + (b - 1) * 3 + k,
+       customer_id,
+       CASE WHEN random() < 0.9 THEN 'paid' ELSE 'refunded' END,
+       500 + floor(random() * 49500)::int,
+       created_at
+FROM (
+    SELECT b,
+           CASE WHEN c < 0.3 THEN 1 + floor(random() * 5)::bigint
+                WHEN c < 0.5 THEN 6 + floor(random() * 100)::bigint
+                ELSE 106 + floor(random() * 49895)::bigint END AS customer_id,
+           date_trunc('minute', timestamptz '2026-01-01 00:00:00+00' + random() * interval '365 days') AS created_at
+    FROM (SELECT b, random() AS c FROM generate_series(1, 2700) AS b) AS batches
+) AS batch
+CROSS JOIN generate_series(1, 3) AS k;
+
+-- Some customers typed the same address as another customer, in other case.
+UPDATE customers AS c
+SET email = CASE WHEN c.email = upper(p.email) THEN lower(p.email) ELSE upper(p.email) END
+FROM customers AS p
+WHERE p.id = c.id - 1
+  AND c.id % 97 = 0;

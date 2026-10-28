@@ -157,11 +157,53 @@ def expected(case: dict) -> dict:
     }
 
 
+def hcl(value) -> str:
+    """A value written as HCL. JSON strings and lists are valid HCL."""
+    if isinstance(value, dict):
+        return "{ " + ", ".join(f"{json.dumps(k)} = {hcl(v)}" for k, v in value.items()) + " }"
+    return json.dumps(value)
+
+
+def wiring_test(gen: Gen) -> str:
+    """A terraform test file with random mocked IDs, checking which ID goes where.
+
+    IDs only exist after apply, so a plan cannot show whether the outputs hold
+    subnet IDs or whether each subnet is in aws_vpc.this. This test gives the
+    VPC and every subnet a random ID during plan and checks both. The IDs are
+    new for every run and only this file knows them; the module may not read
+    files (see hclscan.py).
+    """
+    case = gen.good()
+    hexid = lambda n: "".join(gen.rng.choices("0123456789abcdef", k=n))  # noqa: E731
+    vpc = f"vpc-0{hexid(16)}"
+    ids = {tier: {az: f"subnet-0{hexid(16)}" for az in case["azs"]} for tier in ("public", "private")}
+    lines = ['mock_provider "aws" {}', "", 'run "wiring" {', "  command = plan", "", "  variables {"]
+    lines += [f"    {k} = {hcl(v)}" for k, v in case.items()]
+    lines += ["  }", ""]
+    targets = [("aws_vpc.this", vpc)] + [(f"aws_subnet.{tier}[{json.dumps(az)}]", sid)
+                                         for tier in ids for az, sid in ids[tier].items()]
+    for target, rid in targets:
+        lines += ["  override_resource {", f"    target          = {target}", "    override_during = plan",
+                  f"    values          = {{ id = {json.dumps(rid)} }}", "  }", ""]
+    asserts = [
+        (f"output.vpc_id == {json.dumps(vpc)}", "vpc_id"),
+        (f"alltrue([for s in concat(values(aws_subnet.public), values(aws_subnet.private)) : s.vpc_id == {json.dumps(vpc)}])",
+         "subnets"),
+        (f"output.public_subnet_ids == {hcl(ids['public'])}", "public_subnet_ids"),
+        (f"output.private_subnet_ids == {hcl(ids['private'])}", "private_subnet_ids"),
+    ]
+    for condition, name in asserts:
+        lines += ["  assert {", f"    condition     = {condition}", f"    error_message = {json.dumps(name)}", "  }", ""]
+    lines[-1] = "}"
+    return "\n".join(lines) + "\n"
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--cases", required=True)
     parser.add_argument("--answers", required=True)
     parser.add_argument("--good", type=int, default=3)
+    parser.add_argument("--wiring", help="also write a terraform test file with random mocked IDs here")
     parser.add_argument("--seed", type=int, help="for repeatable local runs; grading uses a random seed")
     args = parser.parse_args()
     rng = random.Random(args.seed if args.seed is not None else secrets.randbits(64))
@@ -189,6 +231,8 @@ def main() -> None:
         (cases_dir / f"{cid}.tfvars.json").write_text(json.dumps(case["inputs"], indent=2) + "\n", encoding="utf-8")
         answers[cid] = case
     Path(args.answers).write_text(json.dumps(answers, indent=2) + "\n", encoding="utf-8")
+    if args.wiring:
+        Path(args.wiring).write_text(wiring_test(gen), encoding="utf-8")
 
 
 if __name__ == "__main__":

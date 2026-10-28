@@ -37,6 +37,7 @@ gen_tests = grader_module("write-the-alerts", "gen_tests")
 gen_cases = grader_module("fix-the-network-module", "gen_cases")
 check_plan = grader_module("fix-the-network-module", "check_plan")
 sqlcheck = grader_module("speed-up-the-queries", "sqlcheck")
+hclscan = grader_module("fix-the-network-module", "hclscan")
 
 
 def changes(*paths, status="modified"):
@@ -471,6 +472,39 @@ class NetworkModuleTests(unittest.TestCase):
         self.assertFalse(check_plan.cmd_diagnostics(str(folder / "b.jsonl"))["validation"])
 
 
+class FileFunctionScanTests(unittest.TestCase):
+    def test_calls_are_found_in_code_and_templates(self):
+        cases = {
+            'x = file("a")': ["file"],
+            'x = core::file("a")': ["file"],
+            'x = file /* c */ ("a")': ["file"],
+            'x = "${fileset("/", "*")}"': ["fileset"],
+            'x = <<EOT\n${templatefile("t", {})}\nEOT\n': ["templatefile"],
+            'x = "a\\"b" + filemd5("c")': ["filemd5"],
+        }
+        for src, want in cases.items():
+            self.assertEqual(hclscan.calls(src), want, src)
+
+    def test_text_and_comments_are_not_calls(self):
+        for src in ('description = "the file (if any)"', '# file("x")', 'x = "$${file(\\"x\\")}"', 'x = profile(1)'):
+            self.assertEqual(hclscan.calls(src), [], src)
+
+    def test_reference_style_module_has_no_calls(self):
+        for name in ("main.tf", "variables.tf", "outputs.tf"):
+            path = ROOT / "challenges" / "fix-the-network-module" / name
+            self.assertEqual(hclscan.calls(path.read_text()), [], name)
+
+    def test_wiring_test_overrides_every_resource(self):
+        import random
+        text = gen_cases.wiring_test(gen_cases.Gen(random.Random(5)))
+        azs = text.count("target          = aws_subnet.public[")
+        self.assertGreaterEqual(azs, 2)
+        self.assertEqual(text.count("target          = aws_subnet.private["), azs)
+        self.assertEqual(text.count("target          = aws_vpc.this"), 1)
+        self.assertEqual(text.count("override_during = plan"), 1 + 2 * azs)
+        self.assertEqual(text.count("assert {"), 4)
+
+
 class QueryGateTests(unittest.TestCase):
     def test_starter_queries_pass_the_gate(self):
         for path in (ROOT / "challenges" / "speed-up-the-queries" / "queries").glob("*.sql"):
@@ -478,7 +512,7 @@ class QueryGateTests(unittest.TestCase):
 
     def test_one_select_only(self):
         ok = ("SELECT 1", "with a as (select 1) select * from a;", "-- note; with a semicolon\nSELECT 1",
-              "/* c */ (SELECT 1)")
+              "/* c */ (SELECT 1)", "SELECT 1; -- a note at the end")
         bad = ("", "SET enable_seqscan = off; SELECT 1", "SELECT 1; SELECT 2", "DELETE FROM orders",
                "-- c\nUPDATE orders SET status = 'x'", "EXPLAIN SELECT 1", "SELECT 1 -- x\n; SET a = 1",
                "SELECT 'a" + "x" * 5000 + "'")

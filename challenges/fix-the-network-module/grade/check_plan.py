@@ -248,6 +248,12 @@ def cmd_score(out_dir: str, answers_path: str) -> dict:
         subnet_problems += result["subnets"]
         tag_problems += result["tags"]
 
+    wiring_file = out / "tf-wiring.json"
+    wiring = json.loads(read(str(wiring_file))) if wiring_file.is_file() else {"total": 0, "failed": []}
+    if wiring.get("total") != 1 or wiring.get("failed"):
+        subnet_problems.insert(0, "In a test plan that gives the VPC and the subnets random IDs, the ID outputs or "
+                                  "the subnets' vpc_id do not match those IDs.")
+
     checks = {}
     if not bad_missed and not good_rejected:
         checks["inputs"] = ("pass", f"All {bad_total} random bad inputs were rejected by a validation rule, "
