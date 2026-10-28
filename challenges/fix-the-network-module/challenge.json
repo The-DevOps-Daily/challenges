@@ -10,7 +10,7 @@
     {
       "id": "fmt-validate",
       "name": "Formatted and valid",
-      "description": "The module calls no file function and has no provider block, terraform init works with no network and only the AWS provider, terraform validate passes, and terraform fmt has nothing to change in main.tf, variables.tf and outputs.tf."
+      "description": "The module has only variable, locals, resource and output blocks and calls no file function, terraform init works with no network and only the AWS provider, terraform validate passes, and terraform fmt has nothing to change in main.tf, variables.tf and outputs.tf."
     },
     {
       "id": "module-tests",

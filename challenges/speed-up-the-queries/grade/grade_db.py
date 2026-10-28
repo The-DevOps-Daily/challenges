@@ -388,13 +388,25 @@ def run(work: Path) -> dict:
 
     with superuser() as conn:
         conn.execute("REVOKE CREATE ON SCHEMA shop FROM app")
-        conn.execute("ALTER ROLE app RESET ALL")
         # A killed migration's session may still be running on the server.
         # End it, and wait until it is gone, before reading the catalogs.
         conn.execute("SELECT pg_terminate_backend(pid, 10000) FROM pg_stat_activity WHERE usename = 'app'")
         if conn.execute("SELECT count(*) FROM pg_stat_activity WHERE usename = 'app'").fetchone()[0]:
             raise SystemExit("the migration's session did not end")
         found = leftovers(conn)
+        # Settings saved with ALTER ROLE app [IN DATABASE ...] SET would apply
+        # when the data is loaded and analyzed. They count as a change, and
+        # are removed in any case.
+        saved = conn.execute(
+            "SELECT s.setdatabase, d.datname FROM pg_db_role_setting s LEFT JOIN pg_database d ON d.oid = s.setdatabase "
+            "WHERE s.setrole = (SELECT oid FROM pg_roles WHERE rolname = 'app')").fetchall()
+        for dboid, dbname in saved:
+            if dboid == 0:
+                conn.execute("ALTER ROLE app RESET ALL")
+            else:
+                conn.execute(sql.SQL("ALTER ROLE app IN DATABASE {} RESET ALL").format(sql.Identifier(dbname)))
+        if saved:
+            found.append("settings saved for the app role (ALTER ROLE app SET)")
         changed = structure(conn) != before
     if outcome.get("timeout"):
         results["indexes"] = {"status": "fail", "detail": f"indexes.sql {outcome['error']}."}

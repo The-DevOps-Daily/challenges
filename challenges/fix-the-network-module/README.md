@@ -45,7 +45,7 @@ Write each rule as a `validation` block, so a bad value stops `terraform plan` w
 - `public_subnet_ids` and `private_subnet_ids`: maps from AZ name to subnet ID.
 - `public_subnet_cidrs` and `private_subnet_cidrs`: maps from AZ name to the subnet's CIDR block.
 
-Leave `versions.tf` and `tests/` as they are; the grader uses the copies from `main`. The module must not configure the AWS provider itself, not even with an aliased `provider` block. The caller does that, and the grader does it for its own plans. The module must not read files either: `file()`, `templatefile()` and the other file functions are not allowed, and the grader also counts words in a comment or string that look like a call to one of them.
+Leave `versions.tf` and `tests/` as they are; the grader uses the copies from `main`. The module must not configure the AWS provider itself. The caller does that, and the grader does it for its own plans. In fact the module needs only `variable`, `locals`, `resource` and `output` blocks, and the grader refuses any other top-level block (`provider`, `data`, `module`, `terraform` and so on). It must not read files either: `file()`, `templatefile()` and the other file functions are not allowed. The grader looks for these in the raw text, so words in a comment or string that look like one count too.
 
 ## What the grader checks
 
@@ -53,7 +53,7 @@ The grader runs Terraform 1.16 with the AWS provider 6.68 in a container with no
 
 | Check | Passes when |
 | --- | --- |
-| Formatted and valid | The module calls no file function and has no `provider` block, `terraform init` works with no network and only the AWS provider, `terraform validate` passes, and `terraform fmt` has nothing to change in `main.tf`, `variables.tf` and `outputs.tf`. |
+| Formatted and valid | The module has only `variable`, `locals`, `resource` and `output` blocks and calls no file function, `terraform init` works with no network and only the AWS provider, `terraform validate` passes, and `terraform fmt` has nothing to change in `main.tf`, `variables.tf` and `outputs.tf`. |
 | The module's tests pass | `terraform test` passes every run in `tests/network.tftest.hcl`. The tests use a mock AWS provider, and one of them gives the VPC and subnets known IDs to check the outputs and that every subnet is in the VPC. |
 | Inputs are validated | For every rule in the inputs table, a random value that breaks it (20 in all) is rejected by a validation rule, and three random sets of good inputs plan without errors. |
 | Subnets for random inputs | For three random sets of good inputs, the plan has `aws_vpc.this` with DNS turned on, and one public and one private subnet per AZ in that VPC, keyed by AZ name, with the range the AZ letter picks. The outputs map AZs to subnet ranges and IDs: a test written for each run gives the VPC and the subnets random IDs and checks where they end up. |

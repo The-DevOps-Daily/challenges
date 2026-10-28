@@ -312,7 +312,13 @@ class AlertRuleShapeTests(unittest.TestCase):
         def group_alertname(doc):
             doc["groups"][0]["labels"] = {"alertname": "CheckoutInstanceDown"}
 
-        for mutate in (record_alerts, set_alertstate, group_alertname):
+        def read_alerts(doc):
+            doc["groups"][0]["rules"][0]["expr"] = 'up == 0 or ALERTS{alertname="CheckoutInstanceDown"}'
+
+        def name_selector(doc):
+            doc["groups"][0]["rules"][0]["expr"] = '{__name__=~"ALERT.+"}'
+
+        for mutate in (record_alerts, set_alertstate, group_alertname, read_alerts, name_selector):
             self.assertTrue(rules(mutate)[1], mutate.__name__)
 
     def test_keep_firing_for_is_refused(self):
@@ -533,13 +539,19 @@ class FileFunctionScanTests(unittest.TestCase):
             path = ROOT / "challenges" / "fix-the-network-module" / name
             self.assertEqual(hclscan.calls(path.read_text()), [], name)
 
-    def test_provider_blocks_are_found(self):
-        for src in ('provider "aws" {\n}', 'provider aws {}', 'provider /* c */ "aws" # x\n {',
-                    'provider "foo" {\n  alias = "exec"\n}'):
-            self.assertEqual(hclscan.provider_blocks(src), 1, src)
-        for src in ("  provider = aws.exec", 'x = provider::aws::arn_parse("a")', "# the provider is set by the caller",
-                    "providers = { aws = aws }"):
-            self.assertEqual(hclscan.provider_blocks(src), 0, src)
+    def test_blocks_the_module_does_not_need_are_found(self):
+        cases = {
+            'provider "aws" {\n}': ["provider"], 'provider aws {}': ["provider"],
+            'provider /* c */ "aws" # x\n {': ["provider"], 'data "terraform_remote_state" "x" {\n}': ["data"],
+            'data /*a*/ "aws_x" /*b*/ "y" /*c*/ {': ["data"], 'module "m" { source = "./" }': ["module"],
+            'terraform {\n  backend "s3" {}\n}': ["terraform"], 'check "c" {': ["check"], 'moved {': ["moved"],
+        }
+        for src, want in cases.items():
+            self.assertEqual(hclscan.blocks(src), want, src)
+        for src in ("  provider = aws.exec", 'x = provider::aws::arn_parse("a")', "x = terraform.workspace",
+                    'ManagedBy = "terraform"\n', 'tags = { ManagedBy = "terraform" }', "x = data.aws_x.y.id",
+                    'resource "aws_vpc" "this" {', "locals {"):
+            self.assertEqual(hclscan.blocks(src), [], src)
 
     def test_wiring_test_overrides_every_resource(self):
         import random

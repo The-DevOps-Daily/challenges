@@ -10,7 +10,7 @@
     {
       "id": "rules-load",
       "name": "The rules load",
-      "description": "promtool check rules passes, and alerts.yml defines CheckoutInstanceDown, CheckoutTargetsMissing, CheckoutHighErrorRate and CheckoutSlowRequests once each, with the severity label from the brief and a summary and an https runbook_url annotation, and no rule uses keep_firing_for."
+      "description": "promtool check rules passes, and alerts.yml defines CheckoutInstanceDown, CheckoutTargetsMissing, CheckoutHighErrorRate and CheckoutSlowRequests once each, with the severity label from the brief and a summary and an https runbook_url annotation, and no rule uses keep_firing_for or reads the ALERTS series."
     },
     {
       "id": "instance-down",
