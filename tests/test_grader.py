@@ -393,11 +393,12 @@ class NetworkModuleTests(unittest.TestCase):
         for seed in range(40):
             gen = gen_cases.Gen(random.Random(seed))
             self.assertTrue(valid_inputs(gen.good()), seed)
-            for variable, make in (("name", gen.bad_name), ("environment", gen.bad_environment),
-                                   ("vpc_cidr", gen.bad_vpc_cidr), ("azs", gen.bad_azs)):
-                case = gen.good()
-                case[variable] = make()[0]
-                self.assertFalse(valid_inputs(case), (seed, variable, case[variable]))
+            for variable, make in (("name", gen.bad_names), ("environment", gen.bad_environments),
+                                   ("vpc_cidr", gen.bad_vpc_cidrs), ("azs", gen.bad_azs)):
+                for value, _ in make():
+                    case = gen.good()
+                    case[variable] = value
+                    self.assertFalse(valid_inputs(case), (seed, variable, value))
 
     def show(self, case, mutate=None):
         exp = gen_cases.expected(case)
@@ -413,7 +414,10 @@ class NetworkModuleTests(unittest.TestCase):
                                          "map_public_ip_on_launch": sub["public_ip"], "tags": sub["tags"]}})
             outputs.setdefault(f"{tier}_subnet_cidrs", {})[az] = sub["cidr"]
             ids.setdefault(f"{tier}_subnet_ids", {})[az] = True
-        show = {"planned_values": {"root_module": {"resources": resources},
+        changes = [{"address": r["address"], "change": {"after_unknown": {"id": True, "vpc_id": True}}}
+                   for r in resources if r["type"] == "aws_subnet"]
+        show = {"resource_changes": changes,
+                "planned_values": {"root_module": {"resources": resources},
                                    "outputs": {k: {"value": v} for k, v in outputs.items()}},
                 "output_changes": {"vpc_id": {"after_unknown": True},
                                    **{k: {"after_unknown": v} for k, v in ids.items()}}}
@@ -441,6 +445,11 @@ class NetworkModuleTests(unittest.TestCase):
         def count(show):
             for r in show["planned_values"]["root_module"]["resources"][1:]:
                 r["index"] = 0
+
+        def other_vpc(show):
+            show["resource_changes"][0]["change"]["after_unknown"]["vpc_id"] = False
+
+        self.assertTrue(self.show(self.CASE, other_vpc)["subnets"])
 
         def known_ids(show):
             show["output_changes"]["public_subnet_ids"] = {"after": {"us-east-1d": "x", "us-east-1f": "y"},

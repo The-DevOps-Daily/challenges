@@ -9,7 +9,8 @@ the module; the answers never go into a container.
 - "good" cases: valid inputs. The plan must succeed and match the expected
   VPC, subnets, outputs and tags.
 - "bad" cases: valid inputs except one variable, which breaks one rule from
-  the README. A validation rule must reject the plan.
+  the README. There is one for every rule, with a random value each time.
+  A validation rule must reject the plan.
 
 Values never sit on the edge of a rule the README leaves open, so a correct
 module always passes.
@@ -79,64 +80,60 @@ class Gen:
         return {"name": self.name(), "environment": self.environment(), "vpc_cidr": self.vpc_cidr(),
                 "azs": self.azs(), "tags": self.tags()}
 
-    # --- bad values, one per rule ---------------------------------------------
+    # --- bad values: every rule of the README, a random value for each ---------
 
-    def bad_name(self) -> tuple[str, str]:
+    def bad_names(self) -> list[tuple[str, str]]:
         r = self.rng
         good = self.name()
-        options = [
+        return [
             (good[0].upper() + good[1:], "has an upper-case letter"),
-            ("".join(r.choices(string.ascii_lowercase, k=2)), "is 2 characters long"),
+            (r.choice(["", r.choice(string.ascii_lowercase), "".join(r.choices(string.ascii_lowercase, k=2))]),
+             "is shorter than 3 characters"),
             (good + "-" + "".join(r.choices(string.ascii_lowercase, k=21 - len(good))), "is longer than 20 characters"),
-            (str(r.randint(1, 9)) + good, "starts with a digit"),
-            ("-" + good, "starts with a hyphen"),
+            (r.choice([str(r.randint(1, 9)), "-"]) + good, "does not start with a letter"),
             (good + "-", "ends with a hyphen"),
-            (good.replace("-", "_") if "-" in good else good + "_x", "has an underscore"),
-            (good + " " + r.choice(WORDS), "has a space"),
-            ("", "is empty"),
+            (good.replace("-", r.choice(["_", " ", "."])) if "-" in good else good + r.choice(["_x", " x", ".x"]),
+             "has a character other than a letter, digit or hyphen"),
         ]
-        return r.choice(options)
 
-    def bad_environment(self) -> tuple[str, str]:
-        value = self.rng.choice(["production", "Prod", "PROD", "development", "test", "stage", "qa", "", "dev ", " prod"])
-        return value, "is not dev, staging or prod"
+    def bad_environments(self) -> list[tuple[str, str]]:
+        r = self.rng
+        return [
+            (r.choice(["production", "development", "test", "stage", "qa", "live"]), "is not dev, staging or prod"),
+            (r.choice(["Prod", "PROD", "Dev", "Staging", "dev ", " prod"]), "is not exactly dev, staging or prod"),
+        ]
 
-    def bad_vpc_cidr(self) -> tuple[str, str]:
+    def bad_vpc_cidrs(self) -> list[tuple[str, str]]:
         r = self.rng
         a, b = r.randint(0, 255), r.randint(0, 255)
-        public_first = r.choice([3, 8, 11, 34, 52, 100, 151, 185, 203])
-        options = [
-            (f"{public_first}.{a}.0.0/16", "is a public range"),
-            (f"172.{r.randint(32, 63)}.0.0/16", "is just outside 172.16.0.0/12"),
-            (f"172.{r.randint(0, 15)}.0.0/16", "is just outside 172.16.0.0/12"),
-            (f"192.{r.choice([167, 169, 170])}.{a}.0/24", "is outside 192.168.0.0/16"),
-            (f"10.0.0.0/{r.randint(8, 15)}", "has a prefix shorter than /16"),
+        return [
+            (f"{r.choice([3, 8, 34, 52, 100, 151, 185, 203])}.{a}.0.0/16", "is a public range"),
+            (r.choice([f"172.{r.randint(32, 63)}.0.0/16", f"172.{r.randint(0, 15)}.0.0/16",
+                       f"192.{r.choice([167, 169, 170])}.{a}.0/24", f"11.{a}.0.0/16"]),
+             "is just outside a private range"),
+            (r.choice([f"10.0.0.0/{r.randint(8, 15)}", "172.16.0.0/12", "192.168.0.0/15"]), "has a prefix shorter than /16"),
             (f"10.{a}.{b}.0/{r.randint(25, 30)}", "has a prefix longer than /24"),
-            (f"10.{a}.0.0", "has no prefix length"),
-            (f"10.{a}.0.0/33", "has a prefix length over 32"),
-            (f"10.{a}.0.300/16", "is not an IP address"),
+            (r.choice([f"10.{a}.0.0", f"10.{a}.0.0/33", f"10.{a}.0.300/16", "banana", "default", "10.20.0.0-10.20.255.255", ""]),
+             "is not a CIDR block"),
             (f"fd{a:02x}:{b:02x}00::/48", "is an IPv6 block"),
-            (r.choice(["banana", "default", "10.20.0.0-10.20.255.255", ""]), "is not a CIDR block"),
         ]
-        return r.choice(options)
 
-    def bad_azs(self) -> tuple[list[str], str]:
+    def bad_azs(self) -> list[tuple[list[str], str]]:
         r = self.rng
         region = r.choice(REGIONS)
         other = r.choice([x for x in REGIONS if x != region])
-        letters = r.sample(LETTERS, 5)
-        options = [
+        letters = r.sample(LETTERS, 6)
+        return [
             ([f"{region}{r.choice(LETTERS)}"], "lists one AZ"),
-            ([f"{region}{c}" for c in letters], "lists five AZs"),
+            ([f"{region}{c}" for c in letters[:r.randint(5, 6)]], "lists more than four AZs"),
             ([f"{region}{letters[0]}", f"{region}{letters[1]}", f"{region}{letters[0]}"], "lists an AZ twice"),
             ([f"{region}{letters[0]}", f"{other}{letters[1]}"], "has AZs in two regions"),
             ([f"{region}{letters[0]}", f"{region}{r.choice('ghjk')}"], "has an AZ letter after f"),
-            ([f"{region}{letters[0]}", region], "has a region instead of an AZ"),
-            ([f"{region}{letters[0]}".upper(), f"{region}{letters[1]}".upper()], "has upper-case AZ names"),
-            ([f"{region}{letters[0]}".replace("-", "_"), f"{region}{letters[1]}".replace("-", "_")],
-             "has underscores in the AZ names"),
+            (r.choice([[f"{region}{letters[0]}", region],
+                       [f"{region}{letters[0]}".upper(), f"{region}{letters[1]}".upper()],
+                       [f"{region}{letters[0]}".replace("-", "_"), f"{region}{letters[1]}".replace("-", "_")]]),
+             "has an entry that is not an AZ name"),
         ]
-        return r.choice(options)
 
 
 def expected(case: dict) -> dict:
@@ -176,10 +173,9 @@ def main() -> None:
     for _ in range(args.good):
         case = gen.good()
         cases.append({"kind": "good", "inputs": case, "expected": expected(case)})
-    for variable, make in (("name", gen.bad_name), ("environment", gen.bad_environment),
-                           ("vpc_cidr", gen.bad_vpc_cidr), ("azs", gen.bad_azs)):
-        for _ in range(2):
-            value, why = make()
+    for variable, make in (("name", gen.bad_names), ("environment", gen.bad_environments),
+                           ("vpc_cidr", gen.bad_vpc_cidrs), ("azs", gen.bad_azs)):
+        for value, why in make():
             inputs = gen.good()
             inputs[variable] = value
             cases.append({"kind": "bad", "inputs": inputs, "variable": variable,

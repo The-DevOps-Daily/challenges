@@ -2,7 +2,8 @@
 -- order they were placed. Customers 1 to 5 are large businesses with about
 -- 24,000 orders each, customers 6 to 105 are regular businesses with about
 -- 800 each, and everyone else has a handful. People type their email
--- addresses in any case.
+-- addresses in any case, and nothing in an address gives away the
+-- customer's ID.
 --
 -- The grader runs SELECT setseed(...) with a random value first, so the data
 -- is different for every run.
@@ -17,7 +18,8 @@ FROM (
            random() AS r,
            first,
            last,
-           first || '.' || last || i || '@' || (ARRAY['example.com', 'mail.example.org', 'shop.example.net'])[1 + floor(random() * 3)::int] AS addr
+           first || '.' || last || '.' || substr(md5(random()::text), 1, 10) || '@'
+               || (ARRAY['example.com', 'mail.example.org', 'shop.example.net'])[1 + floor(random() * 3)::int] AS addr
     FROM (
         SELECT i,
                (ARRAY['anna', 'ben', 'chloe', 'david', 'elena', 'farid', 'grace', 'hugo', 'ines', 'jonas',

@@ -36,7 +36,7 @@ The limits: 60 pages for the order history, 20 for the email lookup and 100 for 
 
 ## What the grader checks
 
-The grader starts PostgreSQL 18.6 in a container with no network. It runs `schema.sql`, then your `indexes.sql` on the empty tables, then loads data from `seed.sql` with a new random seed. For each query it picks random parameters, compares the rows with what the original query returns, and runs `EXPLAIN (ANALYZE, BUFFERS)`: the pages the query touched (shared buffers hit or read, plus temporary files) must stay under the limit, with no sequential scan on `customers` or `orders`. The queries run as a read-only database user, each in a new session.
+The grader starts PostgreSQL 18.6 in a container with no network. It runs `schema.sql`, then your `indexes.sql` on the empty tables, then loads data from `seed.sql` with a new random seed. For each query it picks random parameters, compares the rows with what the original query returns, and runs `EXPLAIN (ANALYZE, BUFFERS)`: the pages the query touched (shared buffers hit or read, plus temporary files) must stay under the limit, with no sequential scan on `customers` or `orders`. The rows it compares and the pages it counts come from the same run of the query. The queries run as a database user that can only read the two tables, each in a new session.
 
 | Check | Passes when |
 | --- | --- |
