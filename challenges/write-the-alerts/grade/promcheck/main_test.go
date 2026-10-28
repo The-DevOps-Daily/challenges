@@ -68,6 +68,48 @@ func TestSelectorsThatReadOtherSeriesAreFound(t *testing.T) {
 	}
 }
 
+func TestClockAndLongLookbackAreFound(t *testing.T) {
+	ok := []string{
+		`max_over_time(up{job="checkout"}[1h]) == 0`,
+		`max_over_time(max_over_time(up{job="checkout"}[30m])[30m:1m]) == 0`,
+		`predict_linear(http_requests_total{job="checkout"}[30m], 3600) > 0`,
+	}
+	bad := []string{
+		`up{job="checkout"} == 0 and on() (vector(time()) < 3600)`,
+		`up{job="checkout"} == 0 and on() hour() < 24`,
+		`up{job="checkout"} == 0 and on() day_of_week(vector(1)) >= 0`,
+		`up{job="checkout"} == 0 unless on() timestamp(up{job="checkout"}) > 10000`,
+		`up{job="checkout"} @ 100 == 0`,
+		`up{job="checkout"} @ start() == 0`,
+		`max_over_time(up{job="checkout"}[5m:1m] @ end()) == 0`,
+		`up{job="checkout"} offset 1h == 0`,
+		`max_over_time(up{job="checkout"}[5m:1m] offset 2h) == 0`,
+		`up{job="checkout"} == 0 and on() absent_over_time(up{job="checkout"}[2h])`,
+		`max_over_time(max_over_time(up{job="checkout"}[31m])[30m:1m]) == 0`,
+		`max_over_time(up{job="checkout"}[30m+31m]) == 0`,
+	}
+	for _, expr := range ok {
+		if got := problems(t, expr, nil, nil); len(got) != 0 {
+			t.Errorf("%s: %v", expr, got)
+		}
+	}
+	for _, expr := range bad {
+		if got := problems(t, expr, nil, nil); len(got) == 0 {
+			t.Errorf("%s: no problem found", expr)
+		}
+	}
+}
+
+func TestMessagesHaveNoBrackets(t *testing.T) {
+	for _, expr := range []string{`{alertname="CheckoutInstanceDown"}`, `ALERTS{alertname="x"}`, `{__name__=~"up"}`} {
+		for _, p := range problems(t, expr, nil, nil) {
+			if strings.ContainsAny(p, "{}[]~") {
+				t.Errorf("%s: %s", expr, p)
+			}
+		}
+	}
+}
+
 func TestRecordingRuleNamedALERTSIsNotAllowed(t *testing.T) {
 	rules := []map[string]any{
 		{"record": "ALERTS", "expr": "vector(1)"},

@@ -6,21 +6,30 @@ import (
 	"testing"
 )
 
+// The resources most snippets refer to, as a second file of the module.
+const declarations = `resource "aws_vpc" "this" {}
+resource "aws_subnet" "public" { for_each = var.azs }
+resource "aws_subnet" "private" { for_each = var.azs }
+resource "aws_subnet" "counted" { count = 2 }
+`
+
 func problemsIn(src string) []string {
-	return checkFile("main.tf", []byte(src))
+	return check(map[string][]byte{"main.tf": []byte(src), "decl.tf": []byte(declarations)})
 }
 
 func TestStarterFilesPass(t *testing.T) {
 	// The starter is broken, but in ways terraform validate reports. The
 	// learner should see those errors first, not this check's.
+	files := map[string][]byte{}
 	for _, name := range []string{"main.tf", "variables.tf", "outputs.tf"} {
 		src, err := os.ReadFile("../../" + name)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got := checkFile(name, src); len(got) != 0 {
-			t.Errorf("%s: %v", name, got)
-		}
+		files[name] = src
+	}
+	if got := check(files); len(got) != 0 {
+		t.Errorf("%v", got)
 	}
 }
 
@@ -37,6 +46,12 @@ func TestAllowedForms(t *testing.T) {
 		`output "a" { value = values(aws_subnet.public)[*].id }`,
 		`output "a" { value = aws_subnet.public["eu-west-1a"].vpc_id }`,
 		`output "a" { value = length(aws_subnet.public) }`,
+		`output "a" { value = { for az, s in aws_subnet.public : az => s["id"] } }`,
+		`output "a" { value = aws_subnet.public["eu-west-1a"]["cidr_block"] }`,
+		`output "a" { value = aws_subnet.public[each.key]["id"] }`,
+		`output "a" { value = aws_vpc.this["id"] }`,
+		`output "a" { value = aws_subnet.counted[0].id }`,
+		`output "a" { value = aws_subnet.counted[*]["vpc_id"] }`,
 		`output "a" {
   value      = aws_vpc.this.id
   depends_on = [aws_subnet.public]
@@ -130,6 +145,11 @@ func TestReferencesThatCouldTellTheGraderApart(t *testing.T) {
 		`output "a" { value = aws_subnet.public[each.key].owner_id }`,
 		`output "a" { value = aws_vpc.this.tags["Name"] }`,
 		`output "a" { value = aws_vpc.this["arn"] }`,
+		`output "a" { value = { for az, s in aws_subnet.public : az => s["arn"] } }`,
+		`output "a" { value = aws_vpc.this[local.attribute] }`,
+		`output "a" { value = aws_vpc.this[local.attribute].id }`,
+		`output "a" { value = aws_subnet.public["eu-west-1a"]["tags"] }`,
+		`output "a" { value = aws_subnet.public["eu-west-1a"] }`,
 		// A whole resource as a value.
 		`output "a" { value = jsonencode(aws_vpc.this) }`,
 		`output "a" { value = lookup(aws_vpc.this, "arn", "") }`,
@@ -165,8 +185,9 @@ func TestReferencesThatCouldTellTheGraderApart(t *testing.T) {
 }
 
 func TestLinesAndFileNames(t *testing.T) {
-	got := checkFile("/module/outputs.tf", []byte("output \"a\" {\n  value = aws_vpc.this.arn\n}\n"))
-	if len(got) != 1 || !strings.HasPrefix(got[0], "outputs.tf line 2 reads aws_vpc.this.arn") {
+	got := check(map[string][]byte{"/module/outputs.tf": []byte("output \"a\" {\n  value = aws_subnet.public[\"b\"].arn\n}\n"),
+		"/module/main.tf": []byte(declarations)})
+	if len(got) != 1 || !strings.HasPrefix(got[0], "outputs.tf line 2 reads aws_subnet.public.b.arn") {
 		t.Errorf("got %v", got)
 	}
 }
