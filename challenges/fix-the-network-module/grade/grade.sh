@@ -78,6 +78,15 @@ if ((${#missing[@]} > 0)); then
   exit 0
 fi
 
+# The hidden test below only works if the module cannot read files.
+if file_calls=$(python3 -I "$GRADE_DIR/hclscan.py" "$module/main.tf" "$module/variables.tf" "$module/outputs.tf"); then
+  :
+else
+  record fmt-validate fail "The module reads files ($(head -n 2 <<<"$file_calls" | paste -sd ';' - | sed 's/;/; /g')). It has no need to, and the grader does not allow it."
+  skip "Skipped: the module reads files." "${later_checks[@]}"
+  exit 0
+fi
+
 # --- pinned tools ---------------------------------------------------------------------
 # -plugin-dir below makes terraform install providers only from this folder,
 # which holds the AWS provider, checked against HashiCorp's SHA256SUMS.
@@ -144,8 +153,18 @@ fi
 # --- inputs, subnets, tags ----------------------------------------------------------------
 # New random inputs for every run. Each plan gets one case file; the answers
 # stay outside the container.
+# A test with random mocked IDs, written now and known only to this run,
+# checks that the outputs hold the right IDs and every subnet is in the VPC.
+wiring="zz_wiring_$(od -An -N6 -tx1 /dev/urandom | tr -d ' \n').tftest.hcl"
+python3 -I "$GRADE_DIR/gen_cases.py" --cases "$cases" --answers "$answers" --wiring "$module/tests/$wiring" || exit 1
+tf -- test -no-color -json -filter="tests/$wiring" > "$out/tf-wiring.jsonl" 2> "$out/tf-wiring.err"
+echo "::group::terraform test with random IDs"
+print_untrusted "$out/tf-wiring.jsonl"
+echo "::endgroup::"
+python3 -I "$GRADE_DIR/check_plan.py" tests "$out/tf-wiring.jsonl" > "$out/tf-wiring.json" || exit 1
+rm -f "$module/tests/$wiring"
+
 cp "$GRADE_DIR/grader_provider.tf" "$module/zz_grader_provider.tf" || exit 1
-python3 -I "$GRADE_DIR/gen_cases.py" --cases "$cases" --answers "$answers" || exit 1
 for case in "$cases"/*.tfvars.json; do
   id=$(basename "$case" .tfvars.json)
   [[ $id =~ ^[0-9a-f]{12}$ ]] || exit 1

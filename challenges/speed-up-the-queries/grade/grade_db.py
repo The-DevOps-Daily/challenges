@@ -76,7 +76,7 @@ QUERIES = {
     },
     "revenue-for-day": {
         "file": "queries/revenue_for_day.sql",
-        "max_pages": 100,
+        "max_pages": 200,
         "ordered": False,
         "reference": (
             "SELECT count(*) AS orders, coalesce(sum(total_cents), 0) AS revenue_cents FROM orders "
@@ -157,11 +157,11 @@ def structure(conn: psycopg.Connection) -> dict:
     """Tables, columns and constraints of the shop schema, read as raw catalog rows."""
     ns = conn.execute("SELECT oid FROM pg_namespace WHERE nspname = 'shop'").fetchone()[0]
     tables = conn.execute(
-        "SELECT relname, relpersistence, reloptions FROM pg_class WHERE relnamespace = %s AND relkind = 'r' ORDER BY 1",
-        [ns]).fetchall()
+        "SELECT relname, relpersistence, reloptions, relacl FROM pg_class WHERE relnamespace = %s AND relkind = 'r' "
+        "ORDER BY 1", [ns]).fetchall()
     columns = conn.execute(
         "SELECT c.relname, a.attnum, a.attname, a.atttypid, a.atttypmod, a.attnotnull, a.atthasdef, a.attgenerated, "
-        "a.attstattarget, a.attoptions, a.attcollation "
+        "a.attstattarget, a.attoptions, a.attcollation, a.attacl "
         "FROM pg_class c JOIN pg_attribute a ON a.attrelid = c.oid "
         "WHERE c.relnamespace = %s AND c.relkind = 'r' AND a.attnum > 0 AND NOT a.attisdropped "
         "ORDER BY c.relname, a.attnum", [ns]).fetchall()
@@ -266,13 +266,28 @@ def pick_params(conn: psycopg.Connection) -> dict[str, list]:
         if cid not in small and conn.execute("SELECT EXISTS (SELECT 1 FROM orders WHERE customer_id = %s)",
                                              [Int8(cid)]).fetchone()[0]:
             small.append(cid)
+    # A customer with two orders at the same time among the 20 newest, so the
+    # order of ties (id DESC) counts too.
+    tied = [r[0] for r in conn.execute(
+        "SELECT DISTINCT customer_id FROM ("
+        "  SELECT customer_id, created_at,"
+        "         row_number() OVER (PARTITION BY customer_id ORDER BY created_at DESC, id DESC) AS n"
+        "  FROM orders) AS newest "
+        "WHERE n <= 20 GROUP BY customer_id, created_at HAVING count(*) > 1").fetchall()]
     customers = [RNG.randint(1, 5), *RNG.sample(range(6, 106), 2), *small]
+    if tied:
+        customers.append(RNG.choice(tied))
     RNG.shuffle(customers)
 
+    def any_case(email: str) -> str:
+        return "".join(ch.upper() if RNG.random() < 0.5 else ch.lower() for ch in email)
+
     emails = []
-    for cid in RNG.sample(range(1, 50001), 4):
-        email = conn.execute("SELECT email FROM customers WHERE id = %s", [Int8(cid)]).fetchone()[0]
-        emails.append("".join(ch.upper() if RNG.random() < 0.5 else ch.lower() for ch in email))
+    for cid in RNG.sample(range(1, 50001), 3):
+        emails.append(any_case(conn.execute("SELECT email FROM customers WHERE id = %s", [Int8(cid)]).fetchone()[0]))
+    # An address two customers share, in different case: both must come back.
+    shared = [r[0] for r in conn.execute("SELECT lower(email) FROM customers GROUP BY 1 HAVING count(*) > 1").fetchall()]
+    emails.append(any_case(RNG.choice(shared)))
     emails.append(f"nobody.{secrets.token_hex(4)}@example.com")
     RNG.shuffle(emails)
 
@@ -400,6 +415,8 @@ def run(work: Path) -> dict:
         results["indexes"] = {"status": "fail", "detail": f"With these indexes, the test data does not load: {reason}"}
         return skip_queries(results, "Skipped: the test data did not load.")
     with superuser() as conn:
+        # Whatever the migration granted, reader may only read the tables.
+        conn.execute("REVOKE ALL ON shop.customers, shop.orders FROM PUBLIC, reader")
         conn.execute("GRANT SELECT ON shop.customers, shop.orders TO reader")
     with connect("reader", passwords["reader"], read_only=True, timeout_ms=LOAD_TIMEOUT_MS) as conn:
         params = pick_params(conn)

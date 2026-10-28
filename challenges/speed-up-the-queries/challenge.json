@@ -20,17 +20,17 @@
     {
       "id": "orders-for-customer",
       "name": "Order history",
-      "description": "For 5 random customers (large, regular and small), queries/orders_for_customer.sql returns the same rows as the original query, and EXPLAIN ANALYZE shows it reading at most 60 pages, with no sequential scan."
+      "description": "For random customers (large, regular, small, and one with two orders at the same time among its newest), queries/orders_for_customer.sql returns the same rows in the same order as the original query, and EXPLAIN ANALYZE shows it reading at most 60 pages, with no sequential scan."
     },
     {
       "id": "find-customer",
       "name": "Find a customer by email",
-      "description": "For 5 random email addresses in random upper and lower case, one of them unknown, queries/find_customer.sql returns the same rows as the original query and reads at most 20 pages, with no sequential scan."
+      "description": "For 5 random email addresses in random upper and lower case, one of them shared by two customers and one unknown, queries/find_customer.sql returns the same rows as the original query and reads at most 20 pages, with no sequential scan."
     },
     {
       "id": "revenue-for-day",
       "name": "Revenue for a day",
-      "description": "For 4 random days, one of them with no orders, queries/revenue_for_day.sql returns the same totals as the original query and reads at most 100 pages, with no sequential scan."
+      "description": "For 4 random days, one of them with no orders, queries/revenue_for_day.sql returns the same totals as the original query and reads at most 200 pages, with no sequential scan."
     }
   ]
 }

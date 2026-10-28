@@ -246,25 +246,29 @@ UPSTREAM = {"502": 1 / 3, "503": 1 / 3, "504": 1 / 3}
 FOUR_XX = [{"404": 1.0}, {"400": 0.3, "404": 0.5, "429": 0.2}, {"429": 1.0}, {"401": 0.4, "404": 0.6}]
 
 
+ROUTES = [(CHECKOUT, 0.5), ("/api/cart", 0.3), ("/api/products", 0.2)]
+
+
 def request_series(gen: Gen, job: str, instances: list[str], weights: list[float], length: int, phases,
-                   codes5: dict[str, float] | None = None, codes4: dict[str, float] | None = None) -> list:
+                   codes5: dict[str, float] | None = None, codes4: dict[str, float] | None = None,
+                   routes: list[tuple[str, float]] | None = None) -> list:
     """http_requests_total series for one job.
 
-    phases(minute) -> (requests per second for the whole job, 5xx ratio, 4xx ratio, per-instance overrides)
-    where overrides maps an instance to its own 5xx ratio. codes5 and codes4
-    split the 5xx and 4xx answers between status codes.
+    phases(minute) -> (requests per second for the whole job, 5xx ratio, 4xx ratio, overrides)
+    where overrides maps an instance or a route to its own 5xx ratio. codes5
+    and codes4 split the 5xx and 4xx answers between status codes, and routes
+    lists the routes with their share of the traffic.
     """
     codes5 = codes5 or gen.rng.choice(FIVE_XX)
     codes4 = codes4 or gen.rng.choice(FOUR_XX)
-    routes = [(CHECKOUT, 0.5), ("/api/cart", 0.3), ("/api/products", 0.2)]
     series = []
     for inst, w in zip(instances, weights):
-        for route, rw in routes:
+        for route, rw in routes or ROUTES:
             for code in ["200", *codes4, *codes5]:
                 incs = []
                 for minute in range(length - 1):
                     rps, p5, p4, over = phases(minute)
-                    p5 = over.get(inst, p5)
+                    p5 = over.get(inst, over.get(route, p5))
                     n = rps * 60 * w * rw
                     share = 1 - p5 - p4 if code == "200" else p4 * codes4.get(code, 0) + p5 * codes5.get(code, 0)
                     incs.append(n * share)
@@ -311,16 +315,36 @@ def error_rate(gen: Gen) -> list[tuple[str, dict]]:
         test_file("", "bad deploy", series, [(q, t0 - 1, []), (q, t0 + 2, []), (q, t0 + 12, exp), (q, t0 + 15, exp)]),
     ))
 
-    # An upstream breaks: the errors are 502, 503 and 504, no 500 at all.
+    # The upstream behind /api/cart and /api/products breaks: their errors are
+    # 502, 503 and 504, no 500, and /api/checkout itself is fine. The whole
+    # service is still over 5%.
     insts = [gen.instance() for _ in range(3)]
     rps, bad5, p4 = gen.uniform(8, 30), gen.uniform(0.09, 0.12), gen.uniform(0.02, 0.08)
     t0 = gen.randint(7, 10)
     length = t0 + 17
+    route_bad = bad5 / 0.5  # cart and products carry half of the traffic
     series = request_series(gen, JOB, insts, weights(gen, 3), length,
-                            lambda m: (rps, bad5 if m >= t0 else 0.0, p4, {}), codes5=UPSTREAM)
+                            lambda m: (rps, 0.0, p4, {"/api/cart": route_bad, "/api/products": route_bad} if m >= t0 else {}),
+                            codes5=UPSTREAM)
     out.append((
-        f"when {bad5:.0%} of requests fail, split between 502, 503 and 504 with no 500, it alerts after 5 minutes",
+        f"when {bad5:.0%} of all requests fail, all on /api/cart and /api/products and split between 502, 503 and "
+        "504 with no 500, it alerts after 5 minutes",
         test_file("", "upstream down", series, [(q, t0 - 1, []), (q, t0 + 12, exp), (q, t0 + 15, exp)]),
+    ))
+
+    # A sudden outage: half of all requests fail from minute t0 on. The ratio
+    # is over 5% from t0 + 1, so the alert fires at t0 + 6 with a 5-minute
+    # "for", not earlier and not later.
+    insts = [gen.instance() for _ in range(3)]
+    rps, p4 = gen.uniform(8, 30), gen.uniform(0.02, 0.08)
+    t0 = gen.randint(7, 10)
+    length = t0 + 13
+    series = request_series(gen, JOB, insts, weights(gen, 3), length,
+                            lambda m: (rps, 0.5 if m >= t0 else 0.0, p4, {}))
+    out.append((
+        "when half of all requests suddenly fail, it alerts once that has lasted 5 minutes, not sooner or later",
+        test_file("", "sudden outage", series,
+                  [(q, t0 - 1, []), (q, t0 + 5.5, []), (q, t0 + 6.5, exp), (q, t0 + 10, exp)]),
     ))
 
     # A steady 1 to 3% of 5xx, while another job fails a lot.
@@ -351,6 +375,18 @@ def error_rate(gen: Gen) -> list[tuple[str, dict]]:
     out.append((
         f"at {rps:.2f} requests per second, under 1, it does not alert even though {p5:.0%} fail",
         test_file("", "low traffic", series, [(q, t, []) for t in (10, 16, 22, 25)]),
+    ))
+
+    # One small route fails a lot; the service as a whole stays under 5%.
+    insts = [gen.instance() for _ in range(3)]
+    rps, bad = gen.uniform(10, 30), gen.uniform(0.4, 0.6)
+    routes = [(CHECKOUT, 0.5), ("/api/cart", 0.28), ("/api/products", 0.2), ("/api/export", 0.02)]
+    series = request_series(gen, JOB, insts, weights(gen, 3), length,
+                            lambda m: (rps, 0.002, 0.03, {"/api/export": bad}), routes=routes)
+    out.append((
+        f"one route with 2% of the traffic failing {bad:.0%} of requests does not alert: the whole service stays "
+        "under 5%",
+        test_file("", "one bad route", series, [(q, t, []) for t in (10, 16, 22, 25)]),
     ))
 
     # One small instance fails a lot; the service as a whole stays under 5%.
@@ -439,7 +475,11 @@ def slow_requests(gen: Gen) -> list[tuple[str, dict]]:
     out.append((
         "when 12% of checkout's /api/checkout requests take over a second (p95 well over 500 ms, average under "
         "it), it alerts after 10 minutes, with severity ticket, even next to a busy fast service",
-        test_file("", "slow checkout", series, [(q, t0 - 1, []), (q, t0 + 5, []), (q, t0 + 16, exp), (q, t0 + 19, exp)]),
+        # 12% slow requests: one slow interval in the 5-minute window is 3%,
+        # two are 6%, so p95 is high from t0 + 2 and a 10-minute "for" fires
+        # at t0 + 12.
+        test_file("", "slow checkout", series, [(q, t0 - 1, []), (q, t0 + 5, []), (q, t0 + 11.5, []),
+                                                (q, t0 + 12.5, exp), (q, t0 + 16, exp), (q, t0 + 19, exp)]),
     ))
 
     # Another service's /api/checkout is slow; checkout's is fast.

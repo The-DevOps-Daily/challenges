@@ -16,19 +16,22 @@ def without_comments(query: str) -> str:
 
 
 def plain_query(text: str) -> str | None:
-    """The query without a trailing semicolon, or None when it is not one SELECT.
+    """The query as written, or None when it is not one SELECT (or WITH) statement.
 
-    The extended protocol already refuses a second statement, and the reader
-    role can only read. This gives a clear message first.
+    It may end with one semicolon and comments. The extended protocol already
+    refuses a second statement, and the reader role can only read. This gives
+    a clear message first.
     """
-    query = text.strip()
-    if query.endswith(";"):
-        query = query[:-1].rstrip()
-    bare = without_comments(query).strip().lstrip("(").lstrip()
-    if not bare or len(query) > MAX_QUERY_CHARS or ";" in bare or "\0" in query:
+    if len(text) > MAX_QUERY_CHARS or "\0" in text:
+        return None
+    bare = without_comments(text).strip()
+    if bare.endswith(";"):
+        bare = bare[:-1].rstrip()
+    bare = bare.lstrip("(").lstrip()
+    if not bare or ";" in bare:
         return None
     first = re.match(r"[A-Za-z]+", bare)
-    return query if first and first.group(0).upper() in ("SELECT", "WITH") else None
+    return text.strip() if first and first.group(0).upper() in ("SELECT", "WITH") else None
 
 
 def plan_pages(plan: dict) -> int:
