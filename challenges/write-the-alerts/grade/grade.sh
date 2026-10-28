@@ -75,7 +75,7 @@ if ((selectors_status > 1)); then
   exit 1
 fi
 if ((selectors_status == 1)); then
-  record rules-load fail "$(head -n 1 <<<"$selectors") A rule may only read the metrics from the brief and the recording rules in alerts.yml."
+  record rules-load fail "$(head -n 1 <<<"$selectors") See What the grader checks in the README."
   skip "Skipped: alerts.yml did not load." "${scenario_checks[@]}"
   exit 0
 fi

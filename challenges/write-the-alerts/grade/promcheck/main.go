@@ -12,9 +12,10 @@
 // series too. Label values must be plain text, not templates.
 //
 // A rule also may not read the clock (time(), hour(), ...), use @ or offset,
-// or look back more than an hour. The grader's scenarios have a random date,
-// every metric and more than an hour of history, so within these limits a
-// rule cannot tell a test from production.
+// or look back more than an hour, also through recording rules, and a
+// recording rule may not read itself. The grader's scenarios have a random
+// date, every metric and more than an hour of history, so within these limits
+// a rule cannot tell a test from production.
 //
 // Prints one line per problem and exits 1 if there are any, 0 if there are
 // none, and 2 if the file cannot be read.
@@ -38,9 +39,14 @@ import (
 // grader runs it (cmd/promtool/main.go).
 var promql = parser.NewParser(parser.Options{ExperimentalDurationExpr: true})
 
-// MaxLookback is how far back a selector may read, ranges and subqueries
-// together. The scenarios in gen_tests.py have more history than this.
-const MaxLookback = time.Hour
+// MaxLookback is how far back a rule may read: an hour of ranges and
+// subqueries, plus the 5 minutes an instant selector looks back, counted
+// through the recording rules it reads. The scenarios in gen_tests.py have
+// more history than this.
+const (
+	MaxLookback   = time.Hour + LookbackDelta
+	LookbackDelta = 5 * time.Minute
+)
 
 var clockFunctions = map[string]bool{
 	"time": true, "timestamp": true, "day_of_month": true, "day_of_week": true, "day_of_year": true,
@@ -67,6 +73,7 @@ func init() {
 
 type rule struct {
 	name        string
+	record      string
 	expr        any
 	labels      map[string]any
 	annotations map[string]any
@@ -102,12 +109,13 @@ func rules(doc any) ([]rule, error) {
 				return nil, fmt.Errorf("a rule is not a mapping")
 			}
 			name := fmt.Sprint(m["alert"])
+			record, _ := m["record"].(string)
 			if rec, ok := m["record"]; ok {
 				name = fmt.Sprint(rec)
 			}
 			labelMap, _ := m["labels"].(map[string]any)
 			annotations, _ := m["annotations"].(map[string]any)
-			out = append(out, rule{name: name, expr: m["expr"], labels: labelMap, annotations: annotations})
+			out = append(out, rule{name: name, record: record, expr: m["expr"], labels: labelMap, annotations: annotations})
 		}
 	}
 	return out, nil
@@ -166,17 +174,24 @@ func selectorProblem(vs *parser.VectorSelector, allowed map[string]bool) string 
 	return ""
 }
 
-func exprProblems(r rule, allowed map[string]bool) []string {
+// use is one selector of a rule: the metric it reads and how far back.
+type use struct {
+	metric   string
+	lookback time.Duration
+}
+
+func exprProblems(r rule, allowed map[string]bool) ([]string, []use) {
 	text, ok := r.expr.(string)
 	if !ok {
 		// A number or a boolean reads no series. promtool decides if it is valid.
-		return nil
+		return nil, nil
 	}
 	expr, err := promql.ParseExpr(text)
 	if err != nil {
-		return []string{fmt.Sprintf("%s: the expression does not parse: %s", short(r.name, 40), short(err.Error(), 120))}
+		return []string{fmt.Sprintf("%s: the expression does not parse: %s", short(r.name, 40), short(err.Error(), 120))}, nil
 	}
 	var problems []string
+	var uses []use
 	add := func(format string, args ...any) {
 		problems = append(problems, short(r.name, 40)+": "+fmt.Sprintf(format, args...))
 	}
@@ -192,7 +207,12 @@ func exprProblems(r rule, allowed map[string]bool) []string {
 			if n.OriginalOffset != 0 || n.OriginalOffsetExpr != nil {
 				add("a selector uses offset.")
 			}
-			var lookback time.Duration
+			lookback := LookbackDelta
+			if len(path) > 0 {
+				if _, inRange := path[len(path)-1].(*parser.MatrixSelector); inRange {
+					lookback = 0
+				}
+			}
 			for _, outer := range path {
 				switch o := outer.(type) {
 				case *parser.MatrixSelector:
@@ -201,8 +221,10 @@ func exprProblems(r rule, allowed map[string]bool) []string {
 					lookback += o.Range
 				}
 			}
-			if lookback > MaxLookback {
-				add("a selector looks back %s, more than an hour.", lookback)
+			for _, m := range n.LabelMatchers {
+				if m != nil && m.Name == labels.MetricName && m.Type == labels.MatchEqual {
+					uses = append(uses, use{metric: m.Value, lookback: lookback})
+				}
 			}
 		case *parser.MatrixSelector:
 			if n.RangeExpr != nil {
@@ -225,6 +247,58 @@ func exprProblems(r rule, allowed map[string]bool) []string {
 		}
 		return nil
 	})
+	return problems, uses
+}
+
+// lookbackProblems follows the recording rules each rule reads. A recording
+// rule that reads itself, directly or through others, keeps state from one
+// evaluation to the next, like a clock, and chained windows add up.
+func lookbackProblems(list []rule, uses [][]use) []string {
+	byName := map[string][]int{}
+	for i, r := range list {
+		if r.record != "" {
+			byName[r.record] = append(byName[r.record], i)
+		}
+	}
+	const (
+		unseen = iota
+		open
+		done
+	)
+	state := make([]int, len(list))
+	longest := make([]time.Duration, len(list))
+	cyclic := make([]bool, len(list))
+	var visit func(i int) (time.Duration, bool)
+	visit = func(i int) (time.Duration, bool) {
+		switch state[i] {
+		case open:
+			return 0, true
+		case done:
+			return longest[i], cyclic[i]
+		}
+		state[i] = open
+		for _, u := range uses[i] {
+			total := u.lookback
+			for _, j := range byName[u.metric] {
+				l, c := visit(j)
+				cyclic[i] = cyclic[i] || c
+				total = max(total, u.lookback+l)
+			}
+			longest[i] = max(longest[i], total)
+		}
+		state[i] = done
+		return longest[i], cyclic[i]
+	}
+	var problems []string
+	for i, r := range list {
+		l, c := visit(i)
+		switch {
+		case c:
+			problems = append(problems, fmt.Sprintf("%s: it reads a recording rule that reads itself, directly or through other rules.", short(r.name, 40)))
+		case l > MaxLookback:
+			problems = append(problems, fmt.Sprintf("%s: it looks back %s, with the recording rules it reads; the limit is an hour.", short(r.name, 40), l))
+		}
+	}
 	return problems
 }
 
@@ -345,11 +419,14 @@ func check(data []byte, metrics []string) ([]string, error) {
 	delete(allowed, "ALERTS")
 	delete(allowed, "ALERTS_FOR_STATE")
 	var problems []string
-	for _, r := range list {
-		problems = append(problems, exprProblems(r, allowed)...)
+	uses := make([][]use, len(list))
+	for i, r := range list {
+		found, u := exprProblems(r, allowed)
+		problems = append(problems, found...)
 		problems = append(problems, templateProblems(r)...)
+		uses[i] = u
 	}
-	return problems, nil
+	return append(problems, lookbackProblems(list, uses)...), nil
 }
 
 func main() {

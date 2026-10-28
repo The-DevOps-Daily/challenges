@@ -73,6 +73,7 @@ func TestClockAndLongLookbackAreFound(t *testing.T) {
 		`max_over_time(up{job="checkout"}[1h]) == 0`,
 		`max_over_time(max_over_time(up{job="checkout"}[30m])[30m:1m]) == 0`,
 		`predict_linear(http_requests_total{job="checkout"}[30m], 3600) > 0`,
+		`max_over_time(up{job="checkout"}[60m:1m]) == 0`,
 	}
 	bad := []string{
 		`up{job="checkout"} == 0 and on() (vector(time()) < 3600)`,
@@ -85,7 +86,8 @@ func TestClockAndLongLookbackAreFound(t *testing.T) {
 		`up{job="checkout"} offset 1h == 0`,
 		`max_over_time(up{job="checkout"}[5m:1m] offset 2h) == 0`,
 		`up{job="checkout"} == 0 and on() absent_over_time(up{job="checkout"}[2h])`,
-		`max_over_time(max_over_time(up{job="checkout"}[31m])[30m:1m]) == 0`,
+		`max_over_time(max_over_time(up{job="checkout"}[36m])[30m:1m]) == 0`,
+		`max_over_time(up{job="checkout"}[61m:1m]) == 0`,
 		`max_over_time(up{job="checkout"}[30m+31m]) == 0`,
 	}
 	for _, expr := range ok {
@@ -97,6 +99,41 @@ func TestClockAndLongLookbackAreFound(t *testing.T) {
 		if got := problems(t, expr, nil, nil); len(got) == 0 {
 			t.Errorf("%s: no problem found", expr)
 		}
+	}
+}
+
+func rulesDoc(rules ...map[string]any) []byte {
+	list := make([]any, len(rules))
+	for i, r := range rules {
+		list[i] = r
+	}
+	data, _ := json.Marshal(map[string]any{"groups": []any{map[string]any{"name": "g", "rules": list}}})
+	return data
+}
+
+func TestRecordingRulesThatKeepStateOrLookFarBack(t *testing.T) {
+	alert := func(expr string) map[string]any { return map[string]any{"alert": "CheckoutInstanceDown", "expr": expr} }
+	record := func(name, expr string) map[string]any { return map[string]any{"record": name, "expr": expr} }
+	bad := map[string][]byte{
+		"ticks": rulesDoc(record("ticks", `(ticks or vector(0)) + 1`),
+			alert(`up{job="checkout"} == 0 and on() (ticks < 120)`)),
+		"two rules in a loop": rulesDoc(record("a", `b + 1`), record("b", `a or vector(0)`),
+			alert(`up{job="checkout"} == 0 and on() (a < 120)`)),
+		"chained windows": rulesDoc(record("up:max40m", `max_over_time(up{job="checkout"}[40m])`),
+			alert(`max_over_time(up:max40m[30m]) == 0`)),
+		"a long chain": rulesDoc(record("r1", `up{job="checkout"}`), record("r2", `max_over_time(r1[20m])`),
+			record("r3", `max_over_time(r2[20m])`), record("r4", `max_over_time(r3[20m])`), alert(`r4 == 0`)),
+	}
+	for name, data := range bad {
+		found, err := check(data, metrics)
+		if err != nil || len(found) == 0 {
+			t.Errorf("%s: got %v, %v", name, found, err)
+		}
+	}
+	good := rulesDoc(record("checkout:up:max10m", `max_over_time(up{job="checkout"}[10m])`),
+		record("checkout:down", `checkout:up:max10m == 0`), alert(`checkout:down`))
+	if found, err := check(good, metrics); err != nil || len(found) != 0 {
+		t.Errorf("chain within the limit: got %v, %v", found, err)
 	}
 }
 
