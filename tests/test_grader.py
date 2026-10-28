@@ -315,6 +315,15 @@ class AlertRuleShapeTests(unittest.TestCase):
         for mutate in (record_alerts, set_alertstate, group_alertname):
             self.assertTrue(rules(mutate)[1], mutate.__name__)
 
+    def test_severity_can_come_from_the_group(self):
+        def group_severity(doc):
+            doc["groups"][0]["labels"] = {"severity": "page"}
+            for rule in doc["groups"][0]["rules"]:
+                if rule["labels"]["severity"] == "page":
+                    del rule["labels"]["severity"]
+
+        self.assertEqual(rules(group_severity), ([], False))
+
     def test_missing_labels_and_annotations_are_listed(self):
         def drop(doc):
             first = doc["groups"][0]["rules"][0]
@@ -473,20 +482,23 @@ class NetworkModuleTests(unittest.TestCase):
 
 
 class FileFunctionScanTests(unittest.TestCase):
-    def test_calls_are_found_in_code_and_templates(self):
+    def test_every_call_is_found(self):
         cases = {
             'x = file("a")': ["file"],
             'x = core::file("a")': ["file"],
-            'x = file /* c */ ("a")': ["file"],
+            'x = file /* ) */ ("a")': ["file"],
+            'x = file # c\n ("a")': ["file"],
             'x = "${fileset("/", "*")}"': ["fileset"],
             'x = <<EOT\n${templatefile("t", {})}\nEOT\n': ["templatefile"],
-            'x = "a\\"b" + filemd5("c")': ["filemd5"],
+            # A heredoc with a delimiter in another script hides nothing.
+            'pad = <<\u00c9\n"\n\u00c9\nstolen = file("/etc/hostname")': ["file"],
         }
         for src, want in cases.items():
             self.assertEqual(hclscan.calls(src), want, src)
 
-    def test_text_and_comments_are_not_calls(self):
-        for src in ('description = "the file (if any)"', '# file("x")', 'x = "$${file(\\"x\\")}"', 'x = profile(1)'):
+    def test_text_that_looks_like_a_call_counts_and_other_names_do_not(self):
+        self.assertEqual(hclscan.calls('description = "the file (if any)"'), ["file"])
+        for src in ('x = profile(1)', 'x = my-file(1)', 'x = "file name"'):
             self.assertEqual(hclscan.calls(src), [], src)
 
     def test_reference_style_module_has_no_calls(self):
@@ -512,10 +524,12 @@ class QueryGateTests(unittest.TestCase):
 
     def test_one_select_only(self):
         ok = ("SELECT 1", "with a as (select 1) select * from a;", "-- note; with a semicolon\nSELECT 1",
-              "/* c */ (SELECT 1)", "SELECT 1; -- a note at the end")
-        bad = ("", "SET enable_seqscan = off; SELECT 1", "SELECT 1; SELECT 2", "DELETE FROM orders",
-               "-- c\nUPDATE orders SET status = 'x'", "EXPLAIN SELECT 1", "SELECT 1 -- x\n; SET a = 1",
-               "SELECT 'a" + "x" * 5000 + "'")
+              "/* c */ (SELECT 1)", "SELECT 1; -- a note at the end", "/* explanation -- note */ SELECT 1",
+              "/* outer /* nested */ still a comment */ SELECT 1", "SELECT 'a;b'")
+        # A second statement after a SELECT is refused by PostgreSQL's
+        # extended protocol, not here.
+        bad = ("", "SET enable_seqscan = off; SELECT 1", "DELETE FROM orders", "-- c\nUPDATE orders SET status = 'x'",
+               "EXPLAIN SELECT 1", "/* nested /* */ SELECT 1", "SELECT 'a" + "x" * 5000 + "'", "SELECT 1\0")
         for query in ok:
             self.assertIsNotNone(sqlcheck.plain_query(query), query)
         for query in bad:

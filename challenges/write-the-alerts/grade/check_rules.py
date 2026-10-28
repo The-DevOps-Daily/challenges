@@ -81,7 +81,7 @@ def check(doc) -> tuple[list[str], bool]:
     if set(doc) != {"groups"}:
         problems.append("alerts.yml has top-level keys other than groups.")
 
-    alerts: dict[str, list[dict]] = {}
+    alerts: dict[str, list[tuple[dict, dict]]] = {}
     for group in doc["groups"]:
         if not isinstance(group, dict) or not isinstance(group.get("rules"), list):
             return ["Every group needs a name and a list of rules."], True
@@ -105,7 +105,8 @@ def check(doc) -> tuple[list[str], bool]:
                 continue
             name = rule.get("alert")
             if isinstance(name, str):
-                alerts.setdefault(name, []).append(rule)
+                group_labels = group.get("labels") if isinstance(group.get("labels"), dict) else {}
+                alerts.setdefault(name, []).append((rule, group_labels))
 
     for name, severity in REQUIRED.items():
         found = alerts.get(name, [])
@@ -115,8 +116,9 @@ def check(doc) -> tuple[list[str], bool]:
         if len(found) > 1:
             problems.append(f"{name} is defined {len(found)} times.")
             continue
-        rule = found[0]
-        labels = rule.get("labels") or {}
+        rule, group_labels = found[0]
+        # Rule labels win over the labels of their group.
+        labels = {**group_labels, **(rule.get("labels") or {})}
         if labels.get("severity") != severity:
             problems.append(f"{name} needs the label severity: {severity}.")
         annotations = rule.get("annotations") or {}
