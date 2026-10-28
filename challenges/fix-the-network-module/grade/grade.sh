@@ -82,8 +82,8 @@ fi
 if file_calls=$(python3 -I "$GRADE_DIR/hclscan.py" "$module/main.tf" "$module/variables.tf" "$module/outputs.tf"); then
   :
 else
-  record fmt-validate fail "The module reads files ($(head -n 2 <<<"$file_calls" | paste -sd ';' - | sed 's/;/; /g')). It has no need to, and the grader does not allow it."
-  skip "Skipped: the module reads files." "${later_checks[@]}"
+  record fmt-validate fail "Found a file function ($(head -n 2 <<<"$file_calls" | paste -sd ';' - | sed 's/;/; /g')). The module may not read files. If it is only words in a comment or string, reword them."
+  skip "Skipped: the module may not read files." "${later_checks[@]}"
   exit 0
 fi
 

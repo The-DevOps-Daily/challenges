@@ -215,6 +215,8 @@ def cmd_compare(show_path: str, answers_path: str, cid: str) -> dict:
 
 
 def first(problems: list[str], what: str) -> str:
+    if what == "problems" and len(problems) == 1:
+        return f"1 problem: {problems[0]}"
     return f"{len(problems)} {what}. First: {problems[0]}"
 
 

@@ -140,6 +140,7 @@ def expected(case: dict) -> dict:
     vpc = ipaddress.ip_network(case["vpc_cidr"])
     blocks = list(vpc.subnets(new_prefix=vpc.prefixlen + 4))
     prefix = f"{case['name']}-{case['environment']}"
+    caller = case.get("tags", {})
     module = {"Environment": case["environment"], "ManagedBy": "terraform"}
     subnets = {}
     for az in case["azs"]:
@@ -149,10 +150,10 @@ def expected(case: dict) -> dict:
                 "az": az,
                 "cidr": str(blocks[block]),
                 "public_ip": tier == "public",
-                "tags": {**case["tags"], **module, "Name": f"{prefix}-{tier}-{az}", "Tier": tier},
+                "tags": {**caller, **module, "Name": f"{prefix}-{tier}-{az}", "Tier": tier},
             }
     return {
-        "vpc": {"cidr": case["vpc_cidr"], "tags": {**case["tags"], **module, "Name": prefix}},
+        "vpc": {"cidr": case["vpc_cidr"], "tags": {**caller, **module, "Name": prefix}},
         "subnets": subnets,
     }
 
@@ -212,8 +213,10 @@ def main() -> None:
     cases_dir.mkdir(parents=True, exist_ok=True)
 
     cases = []
-    for _ in range(args.good):
+    for n in range(args.good):
         case = gen.good()
+        if n == 0:
+            del case["tags"]  # tags is optional: the module must work without it
         cases.append({"kind": "good", "inputs": case, "expected": expected(case)})
     for variable, make in (("name", gen.bad_names), ("environment", gen.bad_environments),
                            ("vpc_cidr", gen.bad_vpc_cidrs), ("azs", gen.bad_azs)):

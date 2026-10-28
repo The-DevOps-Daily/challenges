@@ -368,9 +368,37 @@ def error_rate(gen: Gen) -> list[tuple[str, dict]]:
         test_file("", "4xx", series, [(q, t, []) for t in (10, 16, 22, 25)]),
     ))
 
-    # The middle of the night: well under 1 request per second, half of them fail.
+    # Just over and just under the 5% line, steady for the whole scenario.
+    insts = [gen.instance() for _ in range(3)]
+    rps, p5, p4 = gen.uniform(10, 30), gen.uniform(0.058, 0.063), gen.uniform(0.02, 0.05)
+    t0 = gen.randint(7, 10)
+    series = request_series(gen, JOB, insts, weights(gen, 3), t0 + 17,
+                            lambda m: (rps, p5 if m >= t0 else 0.0, p4, {}))
+    out.append((
+        f"a steady {p5:.1%} of 5xx, just over 5%, alerts",
+        test_file("", "just over", series, [(q, t0 + 12, exp), (q, t0 + 15, exp)]),
+    ))
+    insts = [gen.instance() for _ in range(3)]
+    rps, p5, p4 = gen.uniform(10, 30), gen.uniform(0.040, 0.044), gen.uniform(0.02, 0.05)
+    series = request_series(gen, JOB, insts, weights(gen, 3), length, lambda m: (rps, p5, p4, {}))
+    out.append((
+        f"a steady {p5:.1%} of 5xx, under 5%, does not alert",
+        test_file("", "just under", series, [(q, t, []) for t in (10, 16, 22, 25)]),
+    ))
+
+    # Just over 1 request per second: quiet, but busy enough to page.
     insts = [gen.instance() for _ in range(2)]
-    rps, p5 = gen.uniform(0.15, 0.5), gen.uniform(0.4, 0.6)
+    rps, p5 = gen.uniform(1.3, 1.6), gen.uniform(0.2, 0.3)
+    t0 = gen.randint(7, 10)
+    series = request_series(gen, JOB, insts, weights(gen, 2), t0 + 17, lambda m: (rps, p5 if m >= t0 else 0.0, 0.02, {}))
+    out.append((
+        f"at {rps:.1f} requests per second, just over 1, it alerts when {p5:.0%} fail",
+        test_file("", "quiet but busy enough", series, [(q, t0 + 12, exp), (q, t0 + 15, exp)]),
+    ))
+
+    # The middle of the night: under 1 request per second, half of them fail.
+    insts = [gen.instance() for _ in range(2)]
+    rps, p5 = gen.uniform(0.6, 0.85), gen.uniform(0.4, 0.6)
     series = request_series(gen, JOB, insts, weights(gen, 2), length, lambda m: (rps, p5, 0.02, {}))
     out.append((
         f"at {rps:.2f} requests per second, under 1, it does not alert even though {p5:.0%} fail",
@@ -490,6 +518,24 @@ def slow_requests(gen: Gen) -> list[tuple[str, dict]]:
     out.append((
         "a slow /api/checkout route of another job does not alert",
         test_file("", "other job slow", series, [(q, t, []) for t in (10, 16, 22, 25)]),
+    ))
+
+    # p95 between 500 ms and 1 s: 10% of requests take 0.5 to 1 s.
+    t0 = gen.randint(7, 10)
+    mid = [0.85, 0.05, 0, 0, 0.10, 0, 0, 0]
+    series = latency_series(gen, t0 + 21, gen.uniform(5, 20),
+                            lambda m, idx, route: mid if route == CHECKOUT and m >= t0 else FAST)
+    out.append((
+        "a p95 of about 750 ms, over 500 ms but under a second, alerts",
+        test_file("", "p95 750 ms", series, [(q, t0 + 16, exp), (q, t0 + 19, exp)]),
+    ))
+    # p95 between 250 and 500 ms: 10% of requests take 0.25 to 0.5 s.
+    near = [0.85, 0.05, 0, 0.10, 0, 0, 0, 0]
+    series = latency_series(gen, length, gen.uniform(5, 20),
+                            lambda m, idx, route: near if route == CHECKOUT else FAST)
+    out.append((
+        "a p95 of about 375 ms, under 500 ms, does not alert",
+        test_file("", "p95 375 ms", series, [(q, t, []) for t in (10, 16, 22, 25)]),
     ))
 
     series = latency_series(gen, length, gen.uniform(5, 20), lambda m, idx, route: FAST)

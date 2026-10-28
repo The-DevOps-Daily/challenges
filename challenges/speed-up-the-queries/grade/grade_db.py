@@ -314,7 +314,7 @@ def check_query(work: Path, spec: dict, params: list, expected: dict, password: 
     except UnicodeDecodeError:
         query = None
     if query is None:
-        return "fail", f"{spec['file']} must hold one SELECT (or WITH) statement, with no semicolon inside it."
+        return "fail", f"{spec['file']} must hold one SELECT (or WITH) statement."
 
     worst_pages, worst_param, scans = -1, None, set()
     for param in params:
@@ -398,7 +398,7 @@ def run(work: Path) -> dict:
         results["indexes"] = {"status": "fail", "detail": f"indexes.sql {outcome['error']}."}
         return skip_queries(results, "Skipped: indexes.sql did not finish.")
     if found or changed:
-        what = "; ".join(found[:3]) if found else "changes to the tables (columns, constraints or table settings)"
+        what = "; ".join(found[:3]) if found else "changes to the tables (columns, constraints, settings or privileges)"
         results["indexes"] = {"status": "fail", "detail": f"indexes.sql may only create or drop indexes. It left: {what}."}
         return skip_queries(results, "Skipped: indexes.sql made more than indexes.")
     if outcome["ok"]:
