@@ -15,7 +15,8 @@ looked up in a table.
 Every scenario also looks like production to a rule: it starts at a random
 date and time, it has HISTORY minutes of data before anything happens, and
 checkout and another job both have every metric from the brief, made from
-one model of their traffic (see service()). promcheck stops a rule from
+one model of their traffic (see service()), with counters that have run for
+a while and instance addresses in the forms service discovery gives. promcheck stops a rule from
 reading the clock or looking back further than the history, so a rule
 cannot tell a test from production and act differently there.
 
@@ -50,9 +51,18 @@ class Gen:
         self.used: set[str] = set()
 
     def instance(self) -> str:
+        """A target address, in one of the forms service discovery gives."""
+        r = self.rng
         while True:
-            parts = [10, self.rng.randrange(0, 256), self.rng.randrange(0, 256), self.rng.randrange(2, 255)]
-            name = ".".join(map(str, parts)) + ":" + self.rng.choice(["8080", "9090", "8000"])
+            a, b, c = r.randrange(0, 256), r.randrange(0, 256), r.randrange(2, 255)
+            host = r.choice([
+                f"10.{a}.{b}.{c}",
+                f"172.{r.randrange(16, 32)}.{b}.{c}",
+                f"192.168.{b}.{c}",
+                f"ip-10-{a}-{b}-{c}.{r.choice(['eu-west-1', 'us-east-2', 'ap-south-1'])}.compute.internal",
+                f"{r.choice(['web', 'app', 'api'])}-{r.randrange(16 ** 9):09x}-{''.join(r.choices('bcdfghjklmnpqrstvwxz2456789', k=5))}",
+            ])
+            name = f"{host}:{r.choice(['8080', '9090', '8000', '3000'])}"
             if name not in self.used:
                 self.used.add(name)
                 return name
@@ -83,7 +93,7 @@ def values(points: list) -> str:
         elif p == "stale":
             out.append("stale")
         elif isinstance(p, float):
-            out.append(f"{p:.6g}")
+            out.append(f"{p:.3f}")
         else:
             out.append(str(p))
     return " ".join(out)
@@ -158,8 +168,18 @@ def histogram(gen: Gen, job: str, inst: str, route: str, count: list[int], reset
     the sum of http_requests_total, and shares_at(point) the share of each
     bucket among the requests that came in just before that point.
     """
-    buckets = [[0] for _ in BUCKETS]
-    sums = [0.0]
+    # The counters start where the process's lifetime so far left them.
+    start = []
+    running, shares = 0.0, shares_at(1)
+    for share in shares:
+        running += count[0] * share / (sum(shares) or 1.0)
+        start.append(min(round(running), count[0]))
+    start[-1] = count[0]
+    for i in range(1, len(start)):
+        start[i] = max(start[i], start[i - 1])
+    buckets = [[n] for n in start]
+    sums = [round(sum(n * mid for n, mid in zip([start[0]] + [start[i] - start[i - 1] for i in range(1, len(start))],
+                                                   BUCKET_MID)), 3)]
     for k in range(1, len(count)):
         inc = count[k] - (0 if k == reset else count[k - 1])
         shares = [s * (1 + gen.uniform(-0.03, 0.03)) for s in shares_at(k)]
@@ -217,14 +237,21 @@ def service(gen: Gen, job: str, insts: list[str], w: list[float], length: int, p
 
     series = []
     for idx, (inst, iw) in enumerate(zip(insts, w)):
+        # The process has run for half an hour to 30 days before the history,
+        # so its counters do not start at 0.
+        uptime = gen.uniform(30, 43200)
         state = [scrape(minute(k), idx) for k in range(points)]
         series.append((labels("up", job=job, instance=inst), gaps(state, [s is not None for s in state])))
         keep = [s == 1 for s in state]
         reset = HISTORY + restarts[idx] if restarts and idx in restarts else None
         for route, rw in routes or ROUTES:
             codes = ["200", *codes4, *codes5]
-            totals = dict.fromkeys(codes, 0.0)
-            counts: dict[str, list[int]] = {code: [0] for code in codes}
+            rps0, p50, p40, over0 = phases(0)
+            p50 = over0.get(inst, over0.get(route, p50))
+            totals = {code: rps0 * 60 * iw * rw * uptime * (1 - p50 - p40 if code == "200" else
+                                                            p40 * codes4.get(code, 0) + p50 * codes5.get(code, 0))
+                      for code in codes}
+            counts: dict[str, list[int]] = {code: [round(totals[code])] for code in codes}
             for k in range(1, points):
                 rps, p5, p4, over = phases(minute(k - 1))
                 p5 = over.get(inst, over.get(route, p5))

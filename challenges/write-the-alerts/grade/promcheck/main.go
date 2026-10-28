@@ -9,7 +9,7 @@
 // selector cannot hide from the check: {alertname="X"} with no metric name,
 // {"ALERTS"}, {__name__=~"ALERT.*"} and ALERTS itself are all found. The
 // templates in labels and annotations may not call query, which would read
-// series too.
+// series too. Label values must be plain text, not templates.
 //
 // A rule also may not read the clock (time(), hour(), ...), use @ or offset,
 // or look back more than an hour. The grader's scenarios have a random date,
@@ -311,6 +311,13 @@ func templateProblems(r rule) []string {
 		for _, k := range keys {
 			text, ok := part.values[k].(string)
 			if !ok {
+				continue
+			}
+			// A label template can read $externalURL, $externalLabels and now,
+			// which differ between promtool and a real Prometheus, and labels
+			// decide where an alert goes. These alerts need plain labels.
+			if part.kind == "label" && strings.Contains(text, "{{") {
+				problems = append(problems, fmt.Sprintf("%s: the label %s is a template; label values must be plain text.", short(r.name, 40), short(k, 40)))
 				continue
 			}
 			if why := templateProblem(text); why != "" {
