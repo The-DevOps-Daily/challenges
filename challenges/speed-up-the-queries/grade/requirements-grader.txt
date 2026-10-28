@@ -1,6 +1,10 @@
 # Installed by grade.sh into a venv on the runner, for grade_db.py to talk to
-# the PostgreSQL container. Wheels only; the second psycopg-binary hash is for
-# local runs on arm64.
+# the PostgreSQL container and to parse indexes.sql with PostgreSQL's own
+# parser. Wheels only; the second psycopg-binary hash and the second pglast
+# hash are for local runs on arm64.
+pglast==8.7 \
+    --hash=sha256:e1c2e041507b723ac4eb521846c2a0be76f0b52b4bfd22a7e8e3dce05e3c78cb \
+    --hash=sha256:c8eed4365327d2d64948e79ecefae1324b87d5717179662d10a4306aca2267a7
 psycopg==3.3.6 \
     --hash=sha256:a1db9f7148b06a28606767efaca51fa6f9398c5c0a3810519be69d7000bdb631
 psycopg-binary==3.3.6 \

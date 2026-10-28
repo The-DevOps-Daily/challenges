@@ -15,7 +15,7 @@
     {
       "id": "indexes",
       "name": "The migration runs",
-      "description": "indexes.sql runs without errors as the app's database user, on the empty tables, within 2 minutes, and leaves only indexes behind: the tables, columns and constraints stay as they are, and there are no new functions, views, triggers or other objects."
+      "description": "indexes.sql holds only CREATE INDEX and DROP INDEX statements, runs without errors as the app's database user, on the empty tables, within 2 minutes, and leaves only indexes behind: the tables, columns and constraints stay as they are, the tables stay empty, and there are no new functions, views, triggers or other objects."
     },
     {
       "id": "orders-for-customer",

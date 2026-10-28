@@ -8,14 +8,16 @@ The order of the steps is what keeps the grade honest:
 
 1. The superuser creates the empty tables from schema.sql (from main), owned
    by the "app" role.
-2. indexes.sql runs as app, on the empty tables. app may create objects in
-   the shop schema only for this step, because CREATE INDEX needs it.
+2. PostgreSQL's own parser (pglast) splits indexes.sql into statements, and
+   a statement other than CREATE INDEX or DROP INDEX stops the grading. Then
+   the file runs as app, on the empty tables. app may create objects in the
+   shop schema only for this step, because CREATE INDEX needs it.
 3. The superuser takes that right away again, resets app's role settings,
    and reads the catalogs (with only pg_catalog on its search path): the
    tables, columns and constraints must be as schema.sql made them, and
-   nothing but indexes may be new. So no
-   function, operator, view, trigger, rule or policy of the submission's
-   exists when anything else runs.
+   nothing but indexes may be new, and the tables must still be empty. So
+   no function, operator, view, trigger, rule, policy or row of the
+   submission's exists when anything else runs.
 4. Only then does app load the random data. The migration never saw it, so
    it could not prepare answers.
 5. The "reader" role picks random parameters, computes the expected rows with
@@ -45,7 +47,7 @@ from psycopg.types.numeric import Int8
 
 # grade.sh runs this file with python -I, which leaves its folder off sys.path.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from sqlcheck import plain_query, plan_pages, seq_scans  # noqa: E402
+from sqlcheck import migration_problem, plain_query, plan_pages, seq_scans  # noqa: E402
 
 DATABASE = "shop"
 TABLE_COLUMNS = {
@@ -377,6 +379,13 @@ def run(work: Path) -> dict:
     indexes = work / "indexes.sql"
     outcome = {"ok": False, "error": "indexes.sql is missing"}
     if indexes.is_file():
+        try:
+            problem = migration_problem(indexes.read_text(encoding="utf-8"))
+        except UnicodeDecodeError:
+            problem = "indexes.sql is not UTF-8 text."
+        if problem:
+            results["indexes"] = {"status": "fail", "detail": problem}
+            return skip_queries(results, "Skipped: indexes.sql did not run.")
         env = {**os.environ, "APP_PASSWORD": passwords["app"]}
         try:
             proc = subprocess.run([sys.executable, "-I", __file__, "migrate", str(indexes)], env=env,
@@ -408,6 +417,11 @@ def run(work: Path) -> dict:
         if saved:
             found.append("settings saved for the app role (ALTER ROLE app SET)")
         changed = structure(conn) != before
+        # The expected rows come from this database, so the migration may not
+        # leave rows of its own in it.
+        if not changed and conn.execute(
+                "SELECT EXISTS (SELECT 1 FROM shop.customers) OR EXISTS (SELECT 1 FROM shop.orders)").fetchone()[0]:
+            found.append("rows in the tables, which must be empty until the grader loads its data")
     if outcome.get("timeout"):
         results["indexes"] = {"status": "fail", "detail": f"indexes.sql {outcome['error']}."}
         return skip_queries(results, "Skipped: indexes.sql did not finish.")

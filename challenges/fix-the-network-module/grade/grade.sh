@@ -87,17 +87,20 @@ if ((${#missing[@]} > 0)); then
   exit 0
 fi
 
-# The hidden test below only works if the module cannot read files, and
-# some blocks (provider, terraform_remote_state) could start a program
-# through the AWS SDK's credential_process. See hclscan.py.
-file_calls=$(timeout 60 python3 -I "$GRADE_DIR/hclscan.py" "$module/main.tf" "$module/variables.tf" "$module/outputs.tf")
+# Before Terraform sees the module: Terraform's HCL parser checks that it has
+# only the blocks, resources, functions and references it needs. Some blocks
+# could start a program through the AWS SDK's credential_process, and the
+# test with random IDs below only works if the module cannot read files or
+# the computed attributes a mock provider makes up. See tfcheck/main.go.
+go_build "$GRADE_DIR/tfcheck" "$GRADE_TOOLS/tfcheck" || exit 1
+found=$(timeout 60 "$GRADE_TOOLS/tfcheck" "$module/main.tf" "$module/variables.tf" "$module/outputs.tf")
 scan_status=$?
 if ((scan_status > 1)); then
   exit 1
 elif ((scan_status == 1)); then
-  found=$(head -n 2 <<<"$file_calls" | paste -sd ';' - | sed 's/;/; /g')
-  record fmt-validate fail "$found. The module may only declare variables, locals, resources and outputs, and may not read files. If it is only words in a comment or string, reword them."
-  skip "Skipped: the module has blocks or functions it may not use." "${later_checks[@]}"
+  found=$(head -n 2 <<<"$found" | paste -sd ';' - | sed 's/;/; /g')
+  record fmt-validate fail "$found. The module may only have variables, locals, outputs and aws_vpc and aws_subnet resources, may not read files or paths or call provider functions, and reads only id, cidr_block, availability_zone and vpc_id from its resources."
+  skip "Skipped: the module has blocks, functions or references it may not use." "${later_checks[@]}"
   exit 0
 fi
 

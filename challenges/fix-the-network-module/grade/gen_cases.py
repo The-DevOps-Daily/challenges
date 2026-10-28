@@ -172,7 +172,9 @@ def wiring_test(gen: Gen) -> str:
     subnet IDs or whether each subnet is in aws_vpc.this. This test gives the
     VPC and every subnet a random ID during plan and checks both. The IDs are
     new for every run and only this file knows them; the module may not read
-    files (see hclscan.py).
+    files, and it may not read the other attributes the mock provider makes
+    up (see tfcheck/main.go). Maps are compared with tomap() on both sides:
+    an object and a map with the same keys and values are not equal.
     """
     case = gen.good()
     hexid = lambda n: "".join(gen.rng.choices("0123456789abcdef", k=n))  # noqa: E731
@@ -190,8 +192,8 @@ def wiring_test(gen: Gen) -> str:
         (f"output.vpc_id == {json.dumps(vpc)}", "vpc_id"),
         (f"alltrue([for s in concat(values(aws_subnet.public), values(aws_subnet.private)) : s.vpc_id == {json.dumps(vpc)}])",
          "subnets"),
-        (f"output.public_subnet_ids == {hcl(ids['public'])}", "public_subnet_ids"),
-        (f"output.private_subnet_ids == {hcl(ids['private'])}", "private_subnet_ids"),
+        (f"tomap(output.public_subnet_ids) == tomap({hcl(ids['public'])})", "public_subnet_ids"),
+        (f"tomap(output.private_subnet_ids) == tomap({hcl(ids['private'])})", "private_subnet_ids"),
     ]
     for condition, name in asserts:
         lines += ["  assert {", f"    condition     = {condition}", f"    error_message = {json.dumps(name)}", "  }", ""]

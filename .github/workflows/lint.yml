@@ -23,7 +23,7 @@ jobs:
   lint:
     name: Lint and test the grader
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 15
     permissions:
       contents: read # check out the code to lint
     env:
@@ -33,6 +33,9 @@ jobs:
       ZIZMOR_SHA256: eee12266b793cb87ad4a7e3af2e72404f8a63e3de5eb099b80bf7b1cfd232a8e
       SHELLCHECK_VERSION: 0.11.0
       SHELLCHECK_SHA256: 8c3be12b05d5c177a04c29e3c78ce89ac86f1595681cab149b65b97c4e227198
+      # The same Go as scripts/grade-lib.sh, which builds the graders' Go helpers.
+      GO_VERSION: 1.26.10
+      GO_SHA256: ccfe7ae822d2c2f41f4fe7c956199967a4dac22d0ee0d2b2bfdb440aab3b20c5
     steps:
       - name: Check out
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -55,6 +58,10 @@ jobs:
           tar -xJf shellcheck.txz -C bin --strip-components=1 "shellcheck-v${SHELLCHECK_VERSION}/shellcheck"
           chmod +x bin/*
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+          curl -fsSLo go.tgz "https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz"
+          echo "${GO_SHA256}  go.tgz" | sha256sum --check
+          tar -xzf go.tgz
+          echo "$RUNNER_TEMP/go/bin" >> "$GITHUB_PATH"
 
       - name: actionlint
         run: actionlint -color
@@ -67,5 +74,26 @@ jobs:
       - name: ShellCheck the grader scripts
         run: shellcheck --norc --severity=style --external-sources scripts/*.sh challenges/*/grade/*.sh
 
+      - name: Go helpers
+        env:
+          GOTOOLCHAIN: local
+          GOFLAGS: -mod=readonly
+        run: |
+          set -euo pipefail
+          grep -qx "GO_VERSION=$GO_VERSION" scripts/grade-lib.sh
+          grep -qx "GO_SHA256=$GO_SHA256" scripts/grade-lib.sh
+          for mod in challenges/*/grade/*/go.mod; do
+            dir=$(dirname "$mod")
+            echo "$dir"
+            test -z "$(gofmt -l "$dir")"
+            (cd "$dir" && go vet ./... && go test ./...)
+          done
+
       - name: Unit tests
-        run: python3 -m unittest discover -s tests -v
+        run: |
+          set -euo pipefail
+          python3 -m venv "$RUNNER_TEMP/venv"
+          "$RUNNER_TEMP/venv/bin/pip" install --quiet --disable-pip-version-check --no-deps --only-binary :all: \
+            --require-hashes -r challenges/write-the-alerts/grade/requirements-grader.txt \
+            -r challenges/speed-up-the-queries/grade/requirements-grader.txt
+          "$RUNNER_TEMP/venv/bin/python" -m unittest discover -s tests -v
