@@ -1,8 +1,11 @@
 {
   "schema": 1,
-  "updated_at": "2026-10-28T07:46:59Z",
+  "updated_at": "2026-10-28T10:39:17Z",
   "challenges": {
     "fix-the-deployment": {
+      "passed": 0
+    },
+    "fix-the-network-module": {
       "passed": 0
     },
     "script-it": {
@@ -10,6 +13,12 @@
     },
     "shrink-the-image": {
       "passed": 4
+    },
+    "speed-up-the-queries": {
+      "passed": 0
+    },
+    "write-the-alerts": {
+      "passed": 0
     }
   }
 }
