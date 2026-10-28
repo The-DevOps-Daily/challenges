@@ -1,13 +1,15 @@
-"""Find what a submitted module may not contain: file functions and provider blocks.
+"""Find what a submitted module may not contain: file functions and blocks it does not need.
 
   hclscan.py FILE...    prints one line per finding, exits 1 if any
 
 The grader's hidden tests rely on the module not reading files: with file()
 it could read a test file, or /proc, and learn values it should not know.
-And a provider block of its own (even an aliased one) could point the AWS
-provider at a shared config file with a credential_process, which runs a
-program during plan. The module needs neither: it reads no files, and the
-caller configures the provider.
+Some blocks can make Terraform start a program during plan: a provider block
+or a terraform_remote_state data source can point the AWS SDK at a shared
+config file with a credential_process. The module needs none of them. It
+only declares variables, locals, resources and outputs, so every other kind
+of top-level block (data, module, terraform, provider, check, import, moved,
+removed) is refused.
 
 In HCL a function call is the function's name, then "(", with only spaces,
 newlines and comments in between. This looks for exactly that in the raw
@@ -56,22 +58,29 @@ def next_code(src: str) -> list[int]:
     return after
 
 
-PROVIDER_RE = re.compile(r"(?<!\w)provider(?!\w|-|::)")
+FORBIDDEN_BLOCKS = ("data", "module", "terraform", "provider", "check", "import", "moved", "removed")
+BLOCK_RE = re.compile(r"(?<!\w)(" + "|".join(FORBIDDEN_BLOCKS) + r")(?![\w.:-])")
 LABEL_RE = re.compile(r'"[^"\n]*"|[^\W\d][\w-]*')
 
 
-def provider_blocks(src: str) -> int:
-    """Block headers such as provider "aws" { or provider aws {, in the raw text.
+def blocks(src: str) -> list[str]:
+    """Headers of forbidden blocks: the type, up to two labels, then "{".
 
-    A label with an escaped quote is not matched, but no provider can be
-    named that way, so Terraform would refuse the block anyway.
+    Comments may sit anywhere in between. A label with an escaped quote is
+    not matched, but Terraform has no block type or name that could use one.
     """
     after = next_code(src)
-    found = 0
-    for match in PROVIDER_RE.finditer(src):
-        label = LABEL_RE.match(src, after[match.end()])
-        if label and after[label.end()] < len(src) and src[after[label.end()]] == "{":
-            found += 1
+    found = []
+    for match in BLOCK_RE.finditer(src):
+        pos = after[match.end()]
+        for _ in range(3):
+            if pos < len(src) and src[pos] == "{":
+                found.append(match.group(1))
+                break
+            label = LABEL_RE.match(src, pos)
+            if not label:
+                break
+            pos = after[label.end()]
     return found
 
 
@@ -93,8 +102,8 @@ def main() -> int:
         name_of_file = path.rsplit("/", 1)[-1]
         for name in calls(src):
             found.append(f"{name_of_file} has {name}()")
-        if provider_blocks(src):
-            found.append(f"{name_of_file} has a provider block")
+        for kind in dict.fromkeys(blocks(src)):
+            found.append(f"{name_of_file} has a {kind} block")
     for line in found:
         print(line)
     return 1 if found else 0

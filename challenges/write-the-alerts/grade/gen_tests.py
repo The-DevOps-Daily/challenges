@@ -134,18 +134,21 @@ def instance_down(gen: Gen) -> list[tuple[str, dict]]:
     down_b = down_a + gen.randint(1, 3)
     length = down_b + 9
     series = []
-    for inst, down in ((a, down_a), (b, down_b), (c, None), (d, None)):
-        pts = [1 if down is None or i < down else 0 for i in range(length)]
+    # a stays down; b comes back after 6 minutes, and its alert must stop.
+    for inst, down, back in ((a, down_a, length), (b, down_b, down_b + 6), (c, None, None), (d, None, None)):
+        pts = [1 if down is None or not down <= i < back else 0 for i in range(length)]
         series.append((labels("up", job=JOB, instance=inst), pts))
     gen.rng.shuffle(series)
     exp_a = {"alertname": alert, "instance": a, "severity": "page"}
     exp_b = {"alertname": alert, "instance": b, "severity": "page"}
     out.append((
-        "an instance that stays down alerts after 3 minutes, one alert per instance, with severity page",
+        "an instance that is down alerts after 3 minutes, one alert per instance, with severity page, and the "
+        "alert stops when it is back",
         test_file("", "instances down", series, [
             (q, down_a - 1, []),
             (q, down_a + 3.5, [exp_a]),
             (q, down_b + 3.5, [exp_a, exp_b]),
+            (q, down_b + 6.5, [exp_a]),
         ]),
     ))
 
@@ -189,19 +192,23 @@ def targets_missing(gen: Gen) -> list[tuple[str, dict]]:
     out = []
 
     # Service discovery loses every checkout target: their series go stale.
+    # 9 minutes later they are back, and the alert must stop.
     gone = gen.randint(5, 9)
     length = gone + 14
     series = []
     for _ in range(gen.randint(2, 4)):
-        series.append((labels("up", job=JOB, instance=gen.instance()), [1] * gone + ["stale"]))
+        series.append((labels("up", job=JOB, instance=gen.instance()),
+                       [1] * gone + ["stale"] + [None] * 8 + [1] * (length - gone - 9)))
     series.append((labels("up", job="payments", instance=gen.instance()), [1] * length))
     out.append((
-        "when every checkout target disappears, it alerts after 5 minutes, with severity page",
+        "when every checkout target disappears, it alerts after 5 minutes, with severity page, and stops when "
+        "they are back",
         test_file("", "targets gone", series, [
             (q, gone - 1, []),
             (q, gone + 4, []),
             (q, gone + 6, exp),
-            (q, gone + 12, exp),
+            (q, gone + 8, exp),
+            (q, gone + 10.5, []),
         ]),
     ))
 
@@ -528,19 +535,23 @@ def slow_requests(gen: Gen) -> list[tuple[str, dict]]:
     # traffic: mixed in, it would hide the slowdown.
     rps = gen.uniform(5, 20)
     t0 = gen.randint(7, 10)
-    length = t0 + 21
+    length = t0 + 26
     series = latency_series(gen, length, rps,
-                            lambda m, idx, route: TAIL if route == CHECKOUT and m >= t0 else FAST,
+                            lambda m, idx, route: TAIL if route == CHECKOUT and t0 <= m < t0 + 20 else FAST,
                             restart=(0, t0 + gen.randint(13, 15)))
     series += latency_series(gen, length, rps * gen.uniform(4, 6), lambda m, idx, route: FAST, job="payments")
     out.append((
         "when 12% of checkout's /api/checkout requests take over a second (p95 well over 500 ms, average under "
-        "it), it alerts after 10 minutes, with severity ticket, even next to a busy fast service",
+        "it), it alerts after 10 minutes, with severity ticket, even next to a busy fast service, and stops "
+        "when requests are fast again",
         # 12% slow requests: one slow interval in the 5-minute window is 3%,
         # two are 6%, so p95 is high from t0 + 2 and a 10-minute "for" fires
         # at t0 + 12.
+        # The slowdown ends at t0 + 20: from t0 + 23 at most one slow
+        # interval is left in the window (3%), so the alert stops.
         test_file("", "slow checkout", series, [(q, t0 - 1, []), (q, t0 + 5, []), (q, t0 + 11.5, []),
-                                                (q, t0 + 12.5, exp), (q, t0 + 16, exp), (q, t0 + 19, exp)]),
+                                                (q, t0 + 12.5, exp), (q, t0 + 16, exp), (q, t0 + 19, exp),
+                                                (q, t0 + 24.5, [])]),
     ))
 
     # Another service's /api/checkout is slow; checkout's is fast.

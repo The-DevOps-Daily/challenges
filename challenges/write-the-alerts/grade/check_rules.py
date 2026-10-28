@@ -33,6 +33,7 @@ REQUIRED = {
 # The tests read ALERTS, so no rule may write it or set the labels it uses.
 RESERVED_SERIES = {"ALERTS", "ALERTS_FOR_STATE"}
 RESERVED_LABELS = {"__name__", "alertname", "alertstate"}
+READS_ALERTS_RE = re.compile(r"ALERTS|__name__")
 GROUP_KEYS = {"name", "rules", "interval", "limit", "query_offset", "labels"}
 RULE_KEYS = {"alert", "record", "expr", "for", "keep_firing_for", "labels", "annotations"}
 
@@ -113,6 +114,10 @@ def check(doc) -> tuple[list[str], bool]:
                 return ["Rule labels must be a mapping."], True
             if set(labels) & RESERVED_LABELS:
                 return ["A rule sets __name__, alertname or alertstate as a label. Prometheus sets those itself."], True
+            # An expression that reads ALERTS (by name or through __name__)
+            # could keep an alert firing after its condition is over.
+            if READS_ALERTS_RE.search(str(rule.get("expr", ""))):
+                return ["A rule reads the ALERTS series or selects by __name__, which these alerts have no need for."], True
             if "record" in rule:
                 if str(rule["record"]) in RESERVED_SERIES:
                     return ["A recording rule writes ALERTS or ALERTS_FOR_STATE, which only Prometheus may write."], True
