@@ -29,7 +29,7 @@ The database team left a note on the ticket: "Add indexes, but not one on every 
 
 Make each query read only a few pages of the database (8 kB blocks), and return exactly the same rows as it does today.
 
-- Put indexes in `indexes.sql`. It runs once, as the app's database user, right after `schema.sql`, while the tables are still empty. It may create and drop indexes, and nothing else: no new tables, columns, views, functions, triggers or other objects, and no other changes to the tables.
+- Put indexes in `indexes.sql`. It runs once, as the app's database user, right after `schema.sql`, while the tables are still empty. It may hold only `CREATE INDEX` and `DROP INDEX` statements (and comments): no new tables, columns, views, functions, triggers or other objects, no rows, and no other changes to the tables.
 - You may rewrite the queries. Each must stay one `SELECT` statement that takes the same `$1`, and returns the same columns and the same rows in the same order as the original query, for any data.
 
 The limits: 60 pages for the order history, 20 for the email lookup and 200 for the revenue of a day. For comparison, reading all of `orders` is about 3,400 pages, and all of `customers` about 560.
@@ -40,7 +40,7 @@ The grader starts PostgreSQL 18.6 in a container with no network. It runs `schem
 
 | Check | Passes when |
 | --- | --- |
-| The migration runs | `indexes.sql` runs without errors as the app's database user, on the empty tables, within 2 minutes, and leaves only indexes behind. The tables, columns and constraints stay as they are, and there are no new functions, views, triggers or other objects. |
+| The migration runs | `indexes.sql` holds only `CREATE INDEX` and `DROP INDEX` statements, runs without errors as the app's database user, on the empty tables, within 2 minutes, and leaves only indexes behind. The tables, columns and constraints stay as they are, the tables stay empty, and there are no new functions, views, triggers or other objects. |
 | Order history | For random customers (large, regular, small, and one with two orders at the same time among its newest), the query returns the same rows in the same order as the original, and reads at most 60 pages. |
 | Find a customer by email | For 5 random email addresses in random upper and lower case, one of them shared by two customers and one unknown, the query returns the same rows as the original, and reads at most 20 pages. |
 | Revenue for a day | For 4 random days, one of them with no orders, the query returns the same totals as the original, and reads at most 200 pages. |

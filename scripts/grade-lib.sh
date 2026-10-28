@@ -26,6 +26,24 @@ fetch() {
   }
 }
 
+# go_build SRC_DIR OUT
+# Builds a grader helper written in Go (from main, before any submission code
+# runs) with a Go toolchain pinned by checksum. go.sum pins every module.
+GO_VERSION=1.26.10
+GO_SHA256=ccfe7ae822d2c2f41f4fe7c956199967a4dac22d0ee0d2b2bfdb440aab3b20c5
+go_build() {
+  local src=$1 out=$2 go="$GRADE_TOOLS/go/bin/go"
+  if [[ ! -x $go ]]; then
+    fetch "https://go.dev/dl/go$GO_VERSION.linux-amd64.tar.gz" "$GO_SHA256" "$GRADE_TOOLS/go.tar.gz" || return 1
+    tar -xzf "$GRADE_TOOLS/go.tar.gz" -C "$GRADE_TOOLS" || return 1
+    rm -f "$GRADE_TOOLS/go.tar.gz"
+  fi
+  (cd "$src" && env GOTOOLCHAIN=local GOFLAGS=-mod=readonly GOWORK=off CGO_ENABLED=0 \
+    GOPATH="$GRADE_TOOLS/gopath" GOCACHE="$GRADE_TOOLS/gocache" \
+    GOPROXY=https://proxy.golang.org GOSUMDB=sum.golang.org \
+    timeout 600 "$go" build -trimpath -o "$out" .)
+}
+
 # print_untrusted FILE
 # Prints output that came from the submission (build logs, test output,
 # container logs) with workflow commands switched off, so lines such as

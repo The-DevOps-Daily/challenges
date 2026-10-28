@@ -10,7 +10,7 @@
     {
       "id": "fmt-validate",
       "name": "Formatted and valid",
-      "description": "The module has only variable, locals, resource and output blocks and calls no file function, terraform init works with no network and only the AWS provider, terraform validate passes, and terraform fmt has nothing to change in main.tf, variables.tf and outputs.tf."
+      "description": "The module has only variable, locals, resource (aws_vpc and aws_subnet) and output blocks, reads no files or paths, calls no provider functions, and reads only id, cidr_block, availability_zone and vpc_id from its resources. terraform init works with no network and only the AWS provider, terraform validate passes, and terraform fmt has nothing to change in main.tf, variables.tf and outputs.tf."
     },
     {
       "id": "module-tests",

@@ -47,6 +47,7 @@ promtool() {
 }
 
 timeout 300 docker pull --quiet "$PROMETHEUS_IMAGE" > /dev/null || exit 1
+go_build "$GRADE_DIR/promcheck" "$GRADE_TOOLS/promcheck" || exit 1
 if [[ ! -x $GRADE_TOOLS/venv/bin/python ]]; then
   python3 -m venv "$GRADE_TOOLS/venv" || exit 1
   "$GRADE_TOOLS/venv/bin/pip" install --quiet --disable-pip-version-check --no-deps --only-binary :all: \
@@ -65,6 +66,19 @@ if ((shape_status == 2)); then
   exit 0
 fi
 [[ -f $canonical ]] || exit 1
+# Every selector must name a metric from the brief or a recording rule, so no
+# rule reads ALERTS; templates may not call query. See promcheck/main.go.
+selectors=$(timeout 60 "$GRADE_TOOLS/promcheck" "$canonical" up http_requests_total \
+  http_request_duration_seconds_bucket http_request_duration_seconds_sum http_request_duration_seconds_count)
+selectors_status=$?
+if ((selectors_status > 1)); then
+  exit 1
+fi
+if ((selectors_status == 1)); then
+  record rules-load fail "$(head -n 1 <<<"$selectors") A rule may only read the metrics from the brief and the recording rules in alerts.yml."
+  skip "Skipped: alerts.yml did not load." "${scenario_checks[@]}"
+  exit 0
+fi
 empty="$GRADE_OUT/empty"
 mkdir -p "$empty"
 promtool "$empty" check rules /rules/alerts.yml > "$GRADE_OUT/check-rules.log" 2>&1

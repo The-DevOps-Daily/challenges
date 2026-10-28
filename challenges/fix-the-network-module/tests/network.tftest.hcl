@@ -101,17 +101,17 @@ run "small_vpc" {
   }
 
   assert {
-    condition     = output.public_subnet_cidrs == { "us-east-1d" = "192.168.4.48/28", "us-east-1f" = "192.168.4.80/28" }
+    condition     = tomap(output.public_subnet_cidrs) == tomap({ "us-east-1d" = "192.168.4.48/28", "us-east-1f" = "192.168.4.80/28" })
     error_message = "public_subnet_cidrs is not the map of public subnet ranges by AZ."
   }
 
   assert {
-    condition     = output.private_subnet_cidrs == { "us-east-1d" = "192.168.4.176/28", "us-east-1f" = "192.168.4.208/28" }
+    condition     = tomap(output.private_subnet_cidrs) == tomap({ "us-east-1d" = "192.168.4.176/28", "us-east-1f" = "192.168.4.208/28" })
     error_message = "private_subnet_cidrs is not the map of private subnet ranges by AZ."
   }
 
   assert {
-    condition     = keys(output.public_subnet_ids) == ["us-east-1d", "us-east-1f"] && keys(output.private_subnet_ids) == ["us-east-1d", "us-east-1f"]
+    condition     = tolist(keys(output.public_subnet_ids)) == tolist(["us-east-1d", "us-east-1f"]) && tolist(keys(output.private_subnet_ids)) == tolist(["us-east-1d", "us-east-1f"])
     error_message = "The subnet ID outputs must be maps keyed by AZ."
   }
 }
@@ -189,20 +189,20 @@ run "outputs_hold_the_ids" {
   }
 
   assert {
-    condition = output.public_subnet_ids == {
+    condition = tomap(output.public_subnet_ids) == tomap({
       "eu-west-1a" = "subnet-0aaaaaaaaaaaaaaa1"
       "eu-west-1b" = "subnet-0aaaaaaaaaaaaaaa2"
       "eu-west-1c" = "subnet-0aaaaaaaaaaaaaaa3"
-    }
+    })
     error_message = "public_subnet_ids does not map each AZ to the ID of its public subnet."
   }
 
   assert {
-    condition = output.private_subnet_ids == {
+    condition = tomap(output.private_subnet_ids) == tomap({
       "eu-west-1a" = "subnet-0bbbbbbbbbbbbbbb1"
       "eu-west-1b" = "subnet-0bbbbbbbbbbbbbbb2"
       "eu-west-1c" = "subnet-0bbbbbbbbbbbbbbb3"
-    }
+    })
     error_message = "private_subnet_ids does not map each AZ to the ID of its private subnet."
   }
 }

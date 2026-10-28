@@ -47,6 +47,35 @@ def plain_query(text: str) -> str | None:
     return text.strip() if first and first.group(0).upper() in ("SELECT", "WITH") else None
 
 
+def migration_problem(text: str) -> str | None:
+    """Why indexes.sql may not run, or None when it holds only CREATE INDEX and DROP INDEX.
+
+    The file is split into statements by PostgreSQL's own parser (pglast,
+    the same version as the server), so a statement cannot hide in a
+    comment, a string or a dollar-quoted body.
+    """
+    from pglast import parse_sql  # here, so the other checks need no pglast
+    from pglast.ast import DropStmt, IndexStmt
+    from pglast.enums.parsenodes import ObjectType
+
+    try:
+        statements = parse_sql(text)
+    except Exception as exc:  # noqa: BLE001 - a parse error, or a tree too deep to convert
+        message = str(exc).splitlines()[0] if str(exc) else type(exc).__name__
+        return f"indexes.sql is not valid SQL: {message[:120]}"
+    for n, raw in enumerate(statements, start=1):
+        stmt = raw.stmt
+        if isinstance(stmt, IndexStmt):
+            continue
+        if isinstance(stmt, DropStmt) and stmt.removeType == ObjectType.OBJECT_INDEX:
+            continue
+        start = raw.stmt_location or 0
+        words = re.findall(r"[A-Za-z]+", text[start:start + (raw.stmt_len or len(text))])[:2]
+        what = " ".join(words).upper() or type(stmt).__name__
+        return f"indexes.sql may only hold CREATE INDEX and DROP INDEX statements. Statement {n} is {what}."
+    return None
+
+
 def plan_pages(plan: dict) -> int:
     """8 kB pages the query touched: shared, local and temporary, read or hit."""
     keys = ("Shared Hit Blocks", "Shared Read Blocks", "Local Hit Blocks", "Local Read Blocks",

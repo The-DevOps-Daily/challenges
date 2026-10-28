@@ -33,6 +33,7 @@ Rules for graders:
 - Only the paths in `solution_paths` come from a submission. Everything else, including `grade/`, comes from `main`.
 - Never run submitted code on the runner itself. Run it in a container (see `challenges/script-it/grade/run.sh`) or a throwaway cluster with checks before anything is applied (see `challenges/fix-the-deployment/grade/`).
 - Pin every tool by version and checksum, and every image by digest.
+- To parse a submission the way its tool does, a grader can use a small Go helper with the tool's own parser, in its own module in `grade/<helper>/` with a `go.sum`. `grade.sh` builds it with `go_build` from `scripts/grade-lib.sh` (see `challenges/write-the-alerts/grade/promcheck/`).
 - Print output that came from a submission with `print_untrusted` from `scripts/grade-lib.sh`.
 - Details go into a public PR comment. Say what is wrong, not how to fix it.
 - Do not put a reference solution in the repo. Prove the starter fails and a solution passes in your PR description instead.
@@ -46,7 +47,8 @@ If a grader passes something it should not, or fails a correct solution, open an
 ## Local checks
 
 ```bash
-python3 -m unittest discover -s tests
+python3 -m unittest discover -s tests   # tests that need PyYAML or pglast are skipped without them
+for d in challenges/*/grade/*/go.mod; do (cd "$(dirname "$d")" && go vet ./... && go test ./...); done
 shellcheck --norc --severity=style --external-sources scripts/*.sh challenges/*/grade/*.sh
 actionlint
 zizmor .github/workflows

@@ -37,7 +37,6 @@ gen_tests = grader_module("write-the-alerts", "gen_tests")
 gen_cases = grader_module("fix-the-network-module", "gen_cases")
 check_plan = grader_module("fix-the-network-module", "check_plan")
 sqlcheck = grader_module("speed-up-the-queries", "sqlcheck")
-hclscan = grader_module("fix-the-network-module", "hclscan")
 
 
 def changes(*paths, status="modified"):
@@ -312,13 +311,8 @@ class AlertRuleShapeTests(unittest.TestCase):
         def group_alertname(doc):
             doc["groups"][0]["labels"] = {"alertname": "CheckoutInstanceDown"}
 
-        def read_alerts(doc):
-            doc["groups"][0]["rules"][0]["expr"] = 'up == 0 or ALERTS{alertname="CheckoutInstanceDown"}'
-
-        def name_selector(doc):
-            doc["groups"][0]["rules"][0]["expr"] = '{__name__=~"ALERT.+"}'
-
-        for mutate in (record_alerts, set_alertstate, group_alertname, read_alerts, name_selector):
+        # Reading ALERTS is promcheck's job (promcheck/main_test.go).
+        for mutate in (record_alerts, set_alertstate, group_alertname):
             self.assertTrue(rules(mutate)[1], mutate.__name__)
 
     def test_keep_firing_for_is_refused(self):
@@ -504,55 +498,8 @@ class NetworkModuleTests(unittest.TestCase):
         self.assertFalse(check_plan.cmd_diagnostics(str(folder / "b.jsonl"))["validation"])
 
 
-class FileFunctionScanTests(unittest.TestCase):
-    def test_every_call_is_found(self):
-        cases = {
-            'x = file("a")': ["file"],
-            'x = core::file("a")': ["file"],
-            'x = file /* ) */ ("a")': ["file"],
-            'x = file # c\n ("a")': ["file"],
-            'x = "${fileset("/", "*")}"': ["fileset"],
-            'x = <<EOT\n${templatefile("t", {})}\nEOT\n': ["templatefile"],
-            # A heredoc with a delimiter in another script hides nothing.
-            'pad = <<\u00c9\n"\n\u00c9\nstolen = file("/etc/hostname")': ["file"],
-            # After a minus sign: subtraction and unary minus are real calls.
-            'x = 1-file("a")': ["file"],
-            'x = -file("a")': ["file"],
-            'x = 1 - fileexists("a") ? 1 : 0': ["fileexists"],
-            'x = 1-file /* c */ ("a")': ["file"],
-            'x = -templatefile # c\n ("t", {})': ["templatefile"],
-            'x = 1-file // c\n ("a")': ["file"],
-            # An identifier with a hyphen is not a call, but is reported anyway.
-            'x = a-b-file("a")': ["file"],
-            'x = a-b-file /* c */ ("a")': ["file"],
-        }
-        for src, want in cases.items():
-            self.assertEqual(hclscan.calls(src), want, src)
-
-    def test_text_that_looks_like_a_call_counts_and_other_names_do_not(self):
-        self.assertEqual(hclscan.calls('description = "the file (if any)"'), ["file"])
-        for src in ('x = profile(1)', 'x = file_name(1)', 'x = "file name"', 'x = filed(1)'):
-            self.assertEqual(hclscan.calls(src), [], src)
-
-    def test_reference_style_module_has_no_calls(self):
-        for name in ("main.tf", "variables.tf", "outputs.tf"):
-            path = ROOT / "challenges" / "fix-the-network-module" / name
-            self.assertEqual(hclscan.calls(path.read_text()), [], name)
-
-    def test_blocks_the_module_does_not_need_are_found(self):
-        cases = {
-            'provider "aws" {\n}': ["provider"], 'provider aws {}': ["provider"],
-            'provider /* c */ "aws" # x\n {': ["provider"], 'data "terraform_remote_state" "x" {\n}': ["data"],
-            'data /*a*/ "aws_x" /*b*/ "y" /*c*/ {': ["data"], 'module "m" { source = "./" }': ["module"],
-            'terraform {\n  backend "s3" {}\n}': ["terraform"], 'check "c" {': ["check"], 'moved {': ["moved"],
-        }
-        for src, want in cases.items():
-            self.assertEqual(hclscan.blocks(src), want, src)
-        for src in ("  provider = aws.exec", 'x = provider::aws::arn_parse("a")', "x = terraform.workspace",
-                    'ManagedBy = "terraform"\n', 'tags = { ManagedBy = "terraform" }', "x = data.aws_x.y.id",
-                    'resource "aws_vpc" "this" {', "locals {"):
-            self.assertEqual(hclscan.blocks(src), [], src)
-
+class WiringTestTests(unittest.TestCase):
+    # The module text itself is checked by tfcheck (grade/tfcheck/main_test.go).
     def test_wiring_test_overrides_every_resource(self):
         import random
         text = gen_cases.wiring_test(gen_cases.Gen(random.Random(5)))
@@ -562,6 +509,8 @@ class FileFunctionScanTests(unittest.TestCase):
         self.assertEqual(text.count("target          = aws_vpc.this"), 1)
         self.assertEqual(text.count("override_during = plan"), 1 + 2 * azs)
         self.assertEqual(text.count("assert {"), 4)
+        # An object and a map with the same content are not equal in Terraform.
+        self.assertEqual(text.count("tomap(output."), 2)
 
 
 class QueryGateTests(unittest.TestCase):
@@ -581,6 +530,30 @@ class QueryGateTests(unittest.TestCase):
             self.assertIsNotNone(sqlcheck.plain_query(query), query)
         for query in bad:
             self.assertIsNone(sqlcheck.plain_query(query), query)
+
+    @unittest.skipUnless(importlib.util.find_spec("pglast"), "pglast is not installed")
+    def test_migration_holds_only_index_statements(self):
+        starter = (ROOT / "challenges" / "speed-up-the-queries" / "indexes.sql").read_text()
+        ok = ("", "-- nothing yet\n", starter,
+              "CREATE UNIQUE INDEX IF NOT EXISTS a ON orders (id) WHERE status = 'paid';\nDROP INDEX IF EXISTS b CASCADE;",
+              "/* a ; comment */ CREATE INDEX ON customers (lower(email) text_pattern_ops) INCLUDE (name);",
+              "create index concurrently on orders using brin (created_at) with (pages_per_range = 16)")
+        bad = ("INSERT INTO customers VALUES (-1, 'a', 'b', now())",
+               "CREATE INDEX a ON orders (id); UPDATE orders SET status = 'x'",
+               "ALTER ROLE app SET enable_seqscan = off", "ALTER ROLE app IN DATABASE shop SET work_mem = '1GB'",
+               "DO $$ BEGIN CREATE INDEX x ON orders (id); END $$", "CREATE INDEX a ON orders (id); DROP TABLE orders",
+               "COPY orders FROM PROGRAM 'id'", "SET enable_seqscan = off", "SELECT setval('x', 1)",
+               "CREATE INDEX x\u0301 ON orders (id); GRANT ALL ON orders TO PUBLIC",
+               "BEGIN; CREATE INDEX a ON orders (id); COMMIT", "CREATE INDEX a ON orders (id",
+               "-- CREATE INDEX\nDELETE FROM orders", "/* CREATE INDEX a ON orders (id); */ TRUNCATE orders",
+               "CREATE STATISTICS s ON customer_id, status FROM orders", "ALTER INDEX orders_created_at_idx RENAME TO x",
+               "CREATE FUNCTION f() RETURNS int LANGUAGE sql AS 'select 1'", "WITH x AS (DELETE FROM orders) SELECT 1")
+        for text in ok:
+            self.assertIsNone(sqlcheck.migration_problem(text), text)
+        for text in bad:
+            self.assertIsNotNone(sqlcheck.migration_problem(text), text)
+        self.assertIn("Statement 2 is UPDATE ORDERS",
+                      sqlcheck.migration_problem("CREATE INDEX a ON orders (id); UPDATE orders SET status = 'x'"))
 
     def test_pages_and_seq_scans_are_read_from_the_whole_plan(self):
         plan = {"Node Type": "Limit", "Shared Hit Blocks": 30, "Shared Read Blocks": 4, "Temp Written Blocks": 2,
