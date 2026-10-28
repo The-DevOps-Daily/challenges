@@ -201,12 +201,14 @@ def leftovers(conn: psycopg.Connection) -> list[str]:
     for label, query, args in checks:
         for (name,) in conn.execute(query, args).fetchall():
             found.append(f"{label} named {name}")
-    # Types that belong to a relation were reported with it, and array types
-    # with their element type. That leaves types made with CREATE TYPE or
-    # CREATE DOMAIN.
+    # The only types allowed are the two tables' row types and their array
+    # types. Anything else, a domain over an array included, is reported.
     for (name,) in conn.execute(
-            "SELECT typname FROM pg_type WHERE typnamespace = %s AND typrelid = 0 AND typcategory <> 'A'",
-            [ns]).fetchall():
+            "SELECT typname FROM pg_type WHERE typnamespace = %s AND oid NOT IN ("
+            "  SELECT reltype FROM pg_class WHERE oid = ANY(%s)"
+            "  UNION ALL"
+            "  SELECT t.typarray FROM pg_type t JOIN pg_class c ON c.reltype = t.oid WHERE c.oid = ANY(%s))",
+            [ns, tables, tables]).fetchall():
         found.append(f"a type named {name}")
     return found
 

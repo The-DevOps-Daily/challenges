@@ -36,7 +36,7 @@ Each alert also needs:
 - a `summary` annotation that says what is wrong,
 - a `runbook_url` annotation with an `https://` link (an example.com link is fine).
 
-You can add other labels and annotations, and recording rules if they help.
+You can add other labels and annotations, and recording rules if they help. Each alert stops firing on its own once its condition no longer holds, so do not use `keep_firing_for`.
 
 ## What the grader checks
 
@@ -45,7 +45,7 @@ You can add other labels and annotations, and recording rules if they help.
 | The rules load | `promtool check rules` passes, and `alerts.yml` defines the four alerts once each, with the `severity` label above, a `summary` and an `https://` `runbook_url`. No rule may write the `ALERTS` series or set the `alertname` or `alertstate` labels. |
 | Instance down | An instance that stays down alerts after 3 minutes, one alert per instance. A 2-minute blip does not alert. An instance of another job does not alert. |
 | Targets missing | When every checkout target disappears, or checkout was never scraped, it alerts after 5 minutes (not after 4, but by 6). Instances that are down but still scraped do not count as missing, and neither do another job's targets. |
-| Error rate | More than 5% of 5xx answers, even just over 5%, at 1 request per second or more, alerts once that has lasted 5 minutes, not sooner or later. That holds whatever the 5xx codes and routes are (one scenario has only 502, 503 and 504, all on `/api/cart` and `/api/products`), and next to a busy healthy service. Under 5% of 5xx (even just under), lots of 4xx, under 1 request per second, and one small route or instance that fails a lot do not alert. |
+| Error rate | More than 5% of 5xx answers over 5 minutes, even just over 5%, at 1 request per second or more, alerts once that has lasted 5 minutes, not sooner or later, and stops about 5 minutes after the errors end. That holds whatever the 5xx codes and routes are (one scenario has only 502, 503 and 504, all on `/api/cart` and `/api/products`), when a flaky dependency fails one minute in three, and next to a busy healthy service. Under 5% of 5xx (even just under), lots of 4xx, under 1 request per second, and one small route or instance that fails a lot do not alert. |
 | Slow requests | A p95 for checkout's `/api/checkout` over 500 ms, even only about 750 ms, alerts once that has lasted 10 minutes, not sooner or later, with severity `ticket`, even next to a busy fast service with its own `/api/checkout`. A p95 under 500 ms (even about 375 ms), another slow route, the slow `/api/checkout` of another job, one small slow instance and a 7-minute slowdown do not alert. |
 
 For every check, the grader writes new series at random (instance addresses, traffic, error ratios, latencies and the minute when trouble starts) and runs `promtool test rules` on them in a container, one scenario at a time. The tests read the `ALERTS` series that Prometheus writes for firing alerts, so your annotations and extra labels do not change the result. When a scenario fails, the grader says which one.

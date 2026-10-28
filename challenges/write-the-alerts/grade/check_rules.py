@@ -59,6 +59,18 @@ def loader():
     }
     Loader.add_implicit_resolver("tag:yaml.org,2002:bool", re.compile(r"^(?:true|True|TRUE|false|False|FALSE)$"),
                                  list("tTfF"))
+
+    def no_duplicate_keys(loader, node, deep=False):
+        # PyYAML keeps the last of two equal keys; Prometheus refuses the file.
+        keys = [loader.construct_object(key, deep=deep) for key, _ in node.value]
+        if any(not isinstance(k, str) for k in keys):
+            raise Unsafe("alerts.yml has a mapping key that is not a string.")
+        if len(keys) != len(set(keys)):
+            raise Unsafe("alerts.yml has the same key twice in one mapping.")
+        return yaml.SafeLoader.construct_mapping(loader, node, deep=deep)
+
+    Loader.add_constructor("tag:yaml.org,2002:map",
+                           lambda loader, node: dict(no_duplicate_keys(loader, node, deep=True)))
     return Loader
 
 

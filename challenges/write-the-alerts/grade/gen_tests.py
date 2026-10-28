@@ -332,19 +332,35 @@ def error_rate(gen: Gen) -> list[tuple[str, dict]]:
         test_file("", "upstream down", series, [(q, t0 - 1, []), (q, t0 + 12, exp), (q, t0 + 15, exp)]),
     ))
 
-    # A sudden outage: half of all requests fail from minute t0 on. The ratio
-    # is over 5% from t0 + 1, so the alert fires at t0 + 6 with a 5-minute
-    # "for", not earlier and not later.
+    # A sudden outage: half of all requests fail from minute t0 to t0 + 8.
+    # The ratio over 5 minutes is above 5% from t0 + 1 to t0 + 11, so the
+    # alert fires at t0 + 6 with a 5-minute "for", and resolves at t0 + 12.
     insts = [gen.instance() for _ in range(3)]
     rps, p4 = gen.uniform(8, 30), gen.uniform(0.02, 0.08)
     t0 = gen.randint(7, 10)
-    length = t0 + 13
+    length = t0 + 17
     series = request_series(gen, JOB, insts, weights(gen, 3), length,
-                            lambda m: (rps, 0.5 if m >= t0 else 0.0, p4, {}))
+                            lambda m: (rps, 0.5 if t0 <= m < t0 + 8 else 0.0, p4, {}))
     out.append((
-        "when half of all requests suddenly fail, it alerts once that has lasted 5 minutes, not sooner or later",
+        "when half of all requests fail for 8 minutes, it alerts once that has lasted 5 minutes, not sooner or later, "
+        "and stops about 5 minutes after the errors end",
         test_file("", "sudden outage", series,
-                  [(q, t0 - 1, []), (q, t0 + 5.5, []), (q, t0 + 6.5, exp), (q, t0 + 10, exp)]),
+                  [(q, t0 - 1, []), (q, t0 + 5.5, []), (q, t0 + 6.5, exp), (q, t0 + 10, exp), (q, t0 + 14.5, [])]),
+    ))
+
+    # A flaky dependency: 30% of requests fail one minute in three. Over any
+    # 5 minutes that is 7.5 to 15%, always over 5%; a shorter window, or
+    # irate(), keeps dropping to 0 and the alert never holds for 5 minutes.
+    insts = [gen.instance() for _ in range(3)]
+    rps, p4 = gen.uniform(8, 30), gen.uniform(0.02, 0.08)
+    t0 = gen.randint(7, 10)
+    length = t0 + 17
+    series = request_series(gen, JOB, insts, weights(gen, 3), length,
+                            lambda m: (rps, 0.3 if m >= t0 and (m - t0) % 3 == 0 else 0.0, p4, {}))
+    out.append((
+        "when a flaky dependency makes 30% of requests fail one minute in three, that is over 5% for every 5-minute "
+        "window, and it alerts",
+        test_file("", "flaky dependency", series, [(q, t0 - 1, []), (q, t0 + 12, exp), (q, t0 + 15, exp)]),
     ))
 
     # A steady 1 to 3% of 5xx, while another job fails a lot.
