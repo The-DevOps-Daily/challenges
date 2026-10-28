@@ -17,3 +17,8 @@ CREATE TABLE orders (
 );
 
 CREATE INDEX orders_created_at_idx ON orders (created_at);
+
+-- Most orders belong to about a hundred business customers. With more
+-- statistics on customer_id than the default, the planner knows each of
+-- them, not only the largest.
+ALTER TABLE orders ALTER COLUMN customer_id SET STATISTICS 1000;
