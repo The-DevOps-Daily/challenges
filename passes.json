@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "updated_at": "2026-10-26T23:59:08Z",
+  "updated_at": "2026-10-28T07:46:59Z",
   "passes": [
     {
       "challenge": "shrink-the-image",
@@ -30,6 +30,16 @@
       "sha": "6a8c2a94763349bf7b71a5625ca080cde6578caf",
       "run_id": 40423302043,
       "passed_at": "2026-10-26T23:58:53Z",
+      "policy": 1
+    },
+    {
+      "challenge": "shrink-the-image",
+      "login": "ariagaluh02",
+      "user_id": 80888915,
+      "pr": 43,
+      "sha": "fa633e69aeb08b3b09cca7e58692bf3acf3e0d97",
+      "run_id": 40652197774,
+      "passed_at": "2026-10-28T07:46:43Z",
       "policy": 1
     }
   ]
