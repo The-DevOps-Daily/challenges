@@ -32,8 +32,16 @@ skip() {
 # case file. Nothing in the module can start a program: provisioners only run
 # on apply, the test file from main only plans, and the only provider there is
 # the pinned AWS one. Options before -- go to docker, the rest to terraform.
+# Only terraform init may write to the module folder (it unpacks the
+# provider into .terraform). Every later step sees it read-only, so nothing
+# can change the provider or the files between steps; plans go to $plans.
 tf() {
-  local docker_args=()
+  local docker_args=() module_mode=ro tmpdir=/tmp
+  if [[ $1 == --init ]]; then
+    module_mode=rw
+    tmpdir=/module/.tmp
+    shift
+  fi
   while [[ $1 != -- ]]; do
     docker_args+=("$1")
     shift
@@ -42,7 +50,7 @@ tf() {
   timeout 300 docker run --rm \
     --network none \
     --read-only \
-    --tmpfs /tmp:rw,size=64m,mode=1777 \
+    --tmpfs /tmp:rw,size=256m,mode=1777 \
     --user "$uid_gid" \
     --cap-drop ALL \
     --security-opt no-new-privileges \
@@ -50,10 +58,10 @@ tf() {
     --pids-limit 512 \
     --cpus 2 \
     -e HOME=/tmp \
-    -e TMPDIR=/module/.tmp \
+    -e TMPDIR="$tmpdir" \
     -e TF_IN_AUTOMATION=1 \
     -e CHECKPOINT_DISABLE=1 \
-    -v "$module:/module" \
+    -v "$module:/module:$module_mode" \
     -v "$providers:/providers:ro" \
     "${docker_args[@]}" \
     -w /module \
@@ -61,7 +69,8 @@ tf() {
 }
 
 # --- the module copy: main's versions.tf and tests, the PR's solution files ----------
-mkdir -p "$module/tests" "$module/.tmp" "$cases" "$providers/registry.terraform.io/hashicorp/aws"
+plans="$out/tf-plans"
+mkdir -p "$module/tests" "$module/.tmp" "$cases" "$plans" "$providers/registry.terraform.io/hashicorp/aws"
 cp "$GRADE_WORK/versions.tf" "$module/" || exit 1
 cp "$GRADE_WORK/tests/network.tftest.hcl" "$module/tests/" || exit 1
 missing=()
@@ -78,15 +87,16 @@ if ((${#missing[@]} > 0)); then
   exit 0
 fi
 
-# The hidden test below only works if the module cannot read files.
+# The hidden test below only works if the module cannot read files, and a
+# provider block of its own could start a program (credential_process).
 file_calls=$(timeout 60 python3 -I "$GRADE_DIR/hclscan.py" "$module/main.tf" "$module/variables.tf" "$module/outputs.tf")
 scan_status=$?
 if ((scan_status > 1)); then
   exit 1
 elif ((scan_status == 1)); then
   found=$(head -n 2 <<<"$file_calls" | paste -sd ';' - | sed 's/;/; /g')
-  record fmt-validate fail "Found a file function: $found. The module may not read files. If it is only words in a comment or string, reword them."
-  skip "Skipped: the module may not read files." "${later_checks[@]}"
+  record fmt-validate fail "$found. The module may not read files or configure a provider. If it is only words in a comment or string, reword them."
+  skip "Skipped: the module may not read files or configure a provider." "${later_checks[@]}"
   exit 0
 fi
 
@@ -103,7 +113,7 @@ timeout 300 docker pull --quiet "$TERRAFORM_IMAGE" > /dev/null || exit 1
 # --- fmt-validate -----------------------------------------------------------------------
 tf -- fmt -check -no-color main.tf variables.tf outputs.tf > "$out/tf-fmt.log" 2>&1
 fmt_status=$?
-tf -- init -input=false -no-color -backend=false -plugin-dir=/providers > "$out/tf-init.log" 2>&1
+tf --init -- init -input=false -no-color -backend=false -plugin-dir=/providers > "$out/tf-init.log" 2>&1
 init_status=$?
 echo "::group::terraform init"
 print_untrusted "$out/tf-init.log"
@@ -171,15 +181,15 @@ cp "$GRADE_DIR/grader_provider.tf" "$module/zz_grader_provider.tf" || exit 1
 for case in "$cases"/*.tfvars.json; do
   id=$(basename "$case" .tfvars.json)
   [[ $id =~ ^[0-9a-f]{12}$ ]] || exit 1
-  tf -v "$case:/case.tfvars.json:ro" -- plan -input=false -lock=false -refresh=false -no-color -json \
-    -var-file=/case.tfvars.json -out="$id.tfplan" > "$out/tf-$id.plan.jsonl" 2> "$out/tf-$id.plan.err"
+  tf -v "$case:/case.tfvars.json:ro" -v "$plans:/plans" -- plan -input=false -lock=false -refresh=false -no-color -json \
+    -var-file=/case.tfvars.json -out="/plans/$id.tfplan" > "$out/tf-$id.plan.jsonl" 2> "$out/tf-$id.plan.err"
   status=$?
   echo "$status" > "$out/tf-$id.rc"
   echo "::group::terraform plan, case $id (exit code $status)"
   print_untrusted "$out/tf-$id.plan.jsonl"
   echo "::endgroup::"
   if ((status == 0)); then
-    tf -- show -json -no-color "$id.tfplan" > "$out/tf-$id.show.json" 2> /dev/null
+    tf -v "$plans:/plans:ro" -- show -json -no-color "/plans/$id.tfplan" > "$out/tf-$id.show.json" 2> /dev/null
   fi
 done
 
