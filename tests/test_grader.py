@@ -374,6 +374,54 @@ class AlertScenarioTests(unittest.TestCase):
         second = self.generate(2)[0] / "instance-down-1.yml"
         self.assertNotEqual(first.read_text(), second.read_text())
 
+    def test_every_scenario_looks_like_production(self):
+        # A random date, history before the first check, and every metric for
+        # checkout and another job (checkout was never scraped in one scenario).
+        out, scenarios = self.generate(3)
+        starts = set()
+        for scenario in scenarios:
+            test = json.loads((out / scenario["file"]).read_text())["tests"][0]
+            start = float(test["start_timestamp"])
+            self.assertTrue(gen_tests.EARLIEST <= start < gen_tests.LATEST, scenario["file"])
+            starts.add(start)
+            first = min(int(t["eval_time"].split("m")[0]) for t in test["promql_expr_test"])
+            self.assertGreaterEqual(first, gen_tests.HISTORY, scenario["file"])
+            families = {(re.match(r"[a-z_]+", s["series"]).group(0), re.search(r'job="([a-z]+)"', s["series"]).group(1))
+                        for s in test["input_series"]}
+            jobs = ["payments"] if scenario["description"].startswith("when no checkout target was ever") else [
+                "checkout", "payments"]
+            for job in jobs:
+                for name in ("up", "http_requests_total", "http_request_duration_seconds_bucket",
+                             "http_request_duration_seconds_count", "http_request_duration_seconds_sum"):
+                    self.assertIn((name, job), families, scenario["file"])
+        self.assertEqual(len(starts), len(scenarios))
+
+    def test_histogram_counts_match_the_requests(self):
+        import random
+        gen = gen_tests.Gen(random.Random(4))
+        series = gen_tests.service(gen, "checkout", ["10.0.0.1:8080", "10.0.0.2:8080"], [0.5, 0.5], 20,
+                                   restarts={0: 12}, scrape=lambda m, idx: 0 if idx == 1 and 5 <= m < 9 else 1)
+        points = {name: pts for name, pts in series}
+        for inst in ("10.0.0.1:8080", "10.0.0.2:8080"):
+            for route, _ in gen_tests.ROUTES:
+                tag = f'instance="{inst}",route="{route}"'
+                requests = [pts for name, pts in series if name.startswith("http_requests_total") and tag in name]
+                count = points[f'http_request_duration_seconds_count{{job="checkout",{tag}}}']
+                buckets = [points[f'http_request_duration_seconds_bucket{{job="checkout",{tag},le="{le}"}}']
+                           for le in gen_tests.BUCKETS]
+                for k, total in enumerate(count):
+                    if total is None or total == "stale":
+                        self.assertTrue(all(r[k] in (None, "stale") for r in requests))
+                        continue
+                    self.assertEqual(total, sum(r[k] for r in requests))
+                    column = [b[k] for b in buckets]
+                    self.assertEqual(column, sorted(column))
+                    self.assertEqual(column[-1], total)
+        up = points['up{job="checkout",instance="10.0.0.2:8080"}']
+        self.assertEqual(up[gen_tests.HISTORY + 6], 0)
+        self.assertEqual(points['http_requests_total{job="checkout",instance="10.0.0.2:8080",route="/api/checkout",code="200"}'][
+            gen_tests.HISTORY + 5:gen_tests.HISTORY + 7], ["stale", None])
+
 
 AZ_RE = re.compile(r"^[a-z]{2}(-[a-z]+)+-[0-9]+[a-f]$")
 PRIVATE = [ipaddress.ip_network(n) for n in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16")]

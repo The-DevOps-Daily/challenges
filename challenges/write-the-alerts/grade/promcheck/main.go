@@ -11,6 +11,11 @@
 // templates in labels and annotations may not call query, which would read
 // series too.
 //
+// A rule also may not read the clock (time(), hour(), ...), use @ or offset,
+// or look back more than an hour. The grader's scenarios have a random date,
+// every metric and more than an hour of history, so within these limits a
+// rule cannot tell a test from production.
+//
 // Prints one line per problem and exits 1 if there are any, 0 if there are
 // none, and 2 if the file cannot be read.
 package main
@@ -23,6 +28,7 @@ import (
 	"strings"
 	"text/template"
 	"text/template/parse"
+	"time"
 
 	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/promql/parser"
@@ -31,6 +37,15 @@ import (
 // The options promtool uses when it runs without feature flags, as the
 // grader runs it (cmd/promtool/main.go).
 var promql = parser.NewParser(parser.Options{ExperimentalDurationExpr: true})
+
+// MaxLookback is how far back a selector may read, ranges and subqueries
+// together. The scenarios in gen_tests.py have more history than this.
+const MaxLookback = time.Hour
+
+var clockFunctions = map[string]bool{
+	"time": true, "timestamp": true, "day_of_month": true, "day_of_week": true, "day_of_year": true,
+	"days_in_month": true, "hour": true, "minute": true, "month": true, "year": true,
+}
 
 // The names in Prometheus's template function map (template/template.go),
 // and the variables it defines before every alert template
@@ -132,7 +147,13 @@ func selectorProblem(vs *parser.VectorSelector, allowed map[string]bool) string 
 		}
 	}
 	if len(names) == 0 {
-		return "names no metric"
+		var other []string
+		for _, m := range vs.LabelMatchers {
+			if m != nil {
+				other = append(other, m.Name)
+			}
+		}
+		return fmt.Sprintf("names no metric (it matches on %s)", short(strings.Join(other, ", "), 60))
 	}
 	for _, m := range names {
 		if m.Type != labels.MatchEqual {
@@ -156,10 +177,50 @@ func exprProblems(r rule, allowed map[string]bool) []string {
 		return []string{fmt.Sprintf("%s: the expression does not parse: %s", short(r.name, 40), short(err.Error(), 120))}
 	}
 	var problems []string
-	parser.Inspect(expr, func(node parser.Node, _ []parser.Node) error {
-		if vs, ok := node.(*parser.VectorSelector); ok {
-			if why := selectorProblem(vs, allowed); why != "" {
-				problems = append(problems, fmt.Sprintf("%s: the selector %s %s.", short(r.name, 40), short(vs.String(), 80), why))
+	add := func(format string, args ...any) {
+		problems = append(problems, short(r.name, 40)+": "+fmt.Sprintf(format, args...))
+	}
+	parser.Inspect(expr, func(node parser.Node, path []parser.Node) error {
+		switch n := node.(type) {
+		case *parser.VectorSelector:
+			if why := selectorProblem(n, allowed); why != "" {
+				add("a selector %s.", why)
+			}
+			if n.Timestamp != nil || n.StartOrEnd != 0 {
+				add("a selector uses the @ modifier.")
+			}
+			if n.OriginalOffset != 0 || n.OriginalOffsetExpr != nil {
+				add("a selector uses offset.")
+			}
+			var lookback time.Duration
+			for _, outer := range path {
+				switch o := outer.(type) {
+				case *parser.MatrixSelector:
+					lookback += o.Range
+				case *parser.SubqueryExpr:
+					lookback += o.Range
+				}
+			}
+			if lookback > MaxLookback {
+				add("a selector looks back %s, more than an hour.", lookback)
+			}
+		case *parser.MatrixSelector:
+			if n.RangeExpr != nil {
+				add("a range is a duration expression; write it as a plain duration such as 5m.")
+			}
+		case *parser.SubqueryExpr:
+			if n.Timestamp != nil || n.StartOrEnd != 0 {
+				add("a subquery uses the @ modifier.")
+			}
+			if n.OriginalOffset != 0 || n.OriginalOffsetExpr != nil {
+				add("a subquery uses offset.")
+			}
+			if n.RangeExpr != nil || n.StepExpr != nil {
+				add("a subquery range or step is a duration expression; write it as a plain duration.")
+			}
+		case *parser.Call:
+			if n.Func != nil && clockFunctions[n.Func.Name] {
+				add("it calls %s(), which reads the clock.", n.Func.Name)
 			}
 		}
 		return nil
