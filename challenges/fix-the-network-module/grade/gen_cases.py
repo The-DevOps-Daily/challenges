@@ -32,7 +32,7 @@ LETTERS = "abcdef"
 PRIVATE = [ipaddress.ip_network("10.0.0.0/8"), ipaddress.ip_network("172.16.0.0/12"),
            ipaddress.ip_network("192.168.0.0/16")]
 EXTRA_TAGS = ["Team", "CostCenter", "Owner", "Project", "Service"]
-MODULE_TAGS = ["Name", "Environment", "ManagedBy"]
+MODULE_TAGS = ["Name", "Environment", "ManagedBy", "Tier"]
 WORDS = ["shop", "orders", "billing", "search", "edge", "data", "core", "api", "web", "batch", "ml", "auth"]
 
 
@@ -217,6 +217,9 @@ def main() -> None:
         case = gen.good()
         if n == 0:
             del case["tags"]  # tags is optional: the module must work without it
+        elif n == 1:
+            # The caller sets every tag the module sets itself; the module wins.
+            case["tags"].update({key: "set-by-caller" for key in MODULE_TAGS})
         cases.append({"kind": "good", "inputs": case, "expected": expected(case)})
     for variable, make in (("name", gen.bad_names), ("environment", gen.bad_environments),
                            ("vpc_cidr", gen.bad_vpc_cidrs), ("azs", gen.bad_azs)):

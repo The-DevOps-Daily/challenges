@@ -20,18 +20,47 @@ import sys
 
 FUNCTIONS = ("file", "fileexists", "fileset", "filebase64", "filebase64sha256", "filebase64sha512", "filemd5",
              "filesha1", "filesha256", "filesha512", "templatefile")
-# Not preceded by a letter, digit or _, so "profile(" is not "file(". A "-"
-# before the name does not count: "1-file(" and "-file(" are real calls, and
-# an identifier such as "my-file(" is reported too, which only errs on the
-# safe side.
-CALL_RE = re.compile(
-    r"(?<!\w)(" + "|".join(FUNCTIONS) + r")(?:\s|/\*.*?\*/|#[^\n]*|//[^\n]*)*\(",
-    re.DOTALL,
-)
+# A whole name: not part of a longer word. A "-" before the name does not
+# count: "1-file(" and "-file(" are real calls, and an identifier such as
+# "my-file(" is reported too, which only errs on the safe side.
+NAME_RE = re.compile(r"(?<!\w)(" + "|".join(FUNCTIONS) + r")(?!\w)")
+
+
+def next_code(src: str) -> list[int]:
+    """For each position, where the next character after spaces and comments is.
+
+    One pass from the end, so the scan stays linear however the comments
+    are arranged.
+    """
+    n = len(src)
+    newline = [n] * (n + 1)
+    close = [n] * (n + 2)
+    for i in range(n - 1, -1, -1):
+        newline[i] = i if src[i] == "\n" else newline[i + 1]
+        close[i] = i if src.startswith("*/", i) else close[i + 1]
+    after = [n] * (n + 1)
+    for i in range(n - 1, -1, -1):
+        ch = src[i]
+        if ch.isspace():
+            after[i] = after[i + 1]
+        elif ch == "#" or src.startswith("//", i):
+            after[i] = after[newline[i]]
+        elif src.startswith("/*", i):
+            end = close[i + 2]
+            after[i] = after[end + 2] if end < n else n
+        else:
+            after[i] = i
+    return after
 
 
 def calls(src: str) -> list[str]:
-    return [m.group(1) for m in CALL_RE.finditer(src)]
+    after = next_code(src)
+    found = []
+    for match in NAME_RE.finditer(src):
+        nxt = after[match.end()]
+        if nxt < len(src) and src[nxt] == "(":
+            found.append(match.group(1))
+    return found
 
 
 def main() -> int:
@@ -39,7 +68,7 @@ def main() -> int:
     for path in sys.argv[1:]:
         with open(path, encoding="utf-8", errors="replace") as fh:
             for name in calls(fh.read()):
-                found.append(f"{path.rsplit('/', 1)[-1]} has {name}(")
+                found.append(f"{path.rsplit('/', 1)[-1]} has {name}()")
     for line in found:
         print(line)
     return 1 if found else 0

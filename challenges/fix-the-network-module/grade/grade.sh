@@ -79,10 +79,13 @@ if ((${#missing[@]} > 0)); then
 fi
 
 # The hidden test below only works if the module cannot read files.
-if file_calls=$(python3 -I "$GRADE_DIR/hclscan.py" "$module/main.tf" "$module/variables.tf" "$module/outputs.tf"); then
-  :
-else
-  record fmt-validate fail "Found a file function ($(head -n 2 <<<"$file_calls" | paste -sd ';' - | sed 's/;/; /g')). The module may not read files. If it is only words in a comment or string, reword them."
+file_calls=$(timeout 60 python3 -I "$GRADE_DIR/hclscan.py" "$module/main.tf" "$module/variables.tf" "$module/outputs.tf")
+scan_status=$?
+if ((scan_status > 1)); then
+  exit 1
+elif ((scan_status == 1)); then
+  found=$(head -n 2 <<<"$file_calls" | paste -sd ';' - | sed 's/;/; /g')
+  record fmt-validate fail "Found a file function: $found. The module may not read files. If it is only words in a comment or string, reword them."
   skip "Skipped: the module may not read files." "${later_checks[@]}"
   exit 0
 fi

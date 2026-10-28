@@ -339,7 +339,8 @@ class AlertRuleShapeTests(unittest.TestCase):
 
     @unittest.skipUnless(importlib.util.find_spec("yaml"), "PyYAML is not installed")
     def test_yaml_aliases_and_tags_are_refused(self):
-        for text in ("a: &x [1, 2]\nb: *x\n", "a: !!python/name:os.system x\n", "a: !custom 1\n"):
+        for text in ("a: &x [1, 2]\nb: *x\n", "a: !!python/name:os.system x\n", "a: !custom 1\n",
+                     "groups: []\ngroups: []\n", "a:\n  expr: up\n  expr: vector(1)\n"):
             with self.assertRaises(check_rules.Unsafe):
                 check_rules.load(text)
 
@@ -388,6 +389,14 @@ def valid_inputs(case):
 
 
 class NetworkModuleTests(unittest.TestCase):
+    def test_module_tags_win_over_every_caller_tag(self):
+        case = {"name": "shop", "environment": "dev", "vpc_cidr": "10.1.0.0/16", "azs": ["eu-west-1a", "eu-west-1b"],
+                "tags": {key: "set-by-caller" for key in gen_cases.MODULE_TAGS}}
+        exp = gen_cases.expected(case)
+        self.assertEqual(exp["subnets"]["public/eu-west-1a"]["tags"]["Tier"], "public")
+        self.assertEqual(exp["vpc"]["tags"]["Tier"], "set-by-caller")
+        self.assertEqual(exp["vpc"]["tags"]["ManagedBy"], "terraform")
+
     def test_az_letter_picks_the_block(self):
         case = {"name": "shop", "environment": "prod", "vpc_cidr": "10.20.0.0/16",
                 "azs": ["eu-west-1b", "eu-west-1a"], "tags": {"Name": "mine", "Team": "x"}}

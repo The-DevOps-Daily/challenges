@@ -59,7 +59,7 @@ The grader runs Terraform 1.16 with the AWS provider 6.68 in a container with no
 | Subnets for random inputs | For three random sets of good inputs, the plan has `aws_vpc.this` with DNS turned on, and one public and one private subnet per AZ in that VPC, keyed by AZ name, with the range the AZ letter picks. The outputs map AZs to subnet ranges and IDs: a test written for each run gives the VPC and the subnets random IDs and checks where they end up. |
 | Tags | In the same plans, the VPC and every subnet have the caller's tags plus `Name`, `Environment`, `ManagedBy` and, on subnets, `Tier`, and the module's values win. |
 
-The random inputs are new for every run: names, environments, VPC ranges from all three private ranges, regions, AZ letters in any order, and caller tags (sometimes with a `Name` or `Environment` of their own, and sometimes no `tags` at all). When a check fails, the grader says which input it used and what it saw.
+The random inputs are new for every run: names, environments, VPC ranges from all three private ranges, regions, AZ letters in any order, and caller tags (sometimes with their own `Name`, `Environment`, `ManagedBy` or `Tier`, and sometimes no `tags` at all). When a check fails, the grader says which input it used and what it saw.
 
 ## Files you may change
 
