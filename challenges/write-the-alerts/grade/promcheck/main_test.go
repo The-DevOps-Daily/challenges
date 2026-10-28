@@ -144,7 +144,14 @@ func TestTemplatesMayNotCallQuery(t *testing.T) {
 		`{{ unclosed`,
 	}
 	for _, text := range ok {
-		if got := problems(t, `up == 0`, map[string]string{"x": text}, map[string]string{"summary": text}); len(got) != 0 {
+		if got := problems(t, `up == 0`, map[string]string{"team": "checkout"}, map[string]string{"summary": text}); len(got) != 0 {
+			t.Errorf("%s: %v", text, got)
+		}
+	}
+	// Labels may not be templates at all.
+	for _, text := range []string{`{{ $labels.instance }}`, `{{ if eq $externalURL "" }}page{{ else }}none{{ end }}`, `x{{"y"}}`} {
+		got := problems(t, `up == 0`, map[string]string{"severity": text}, nil)
+		if len(got) != 1 || !strings.Contains(got[0], "label severity is a template") {
 			t.Errorf("%s: %v", text, got)
 		}
 	}
@@ -164,15 +171,15 @@ func TestTemplatesMayNotCallQuery(t *testing.T) {
 	}
 }
 
-func TestGroupLabelsAreTemplatesToo(t *testing.T) {
+func TestGroupLabelsArePlainToo(t *testing.T) {
 	group := map[string]any{"name": "checkout", "labels": map[string]any{"team": `{{ with query "ALERTS" }}x{{ end }}`},
 		"rules": []any{map[string]any{"alert": "CheckoutInstanceDown", "expr": "up == 0"}}}
 	data, _ := json.Marshal(map[string]any{"groups": []any{group}})
 	found, err := check(data, metrics)
-	if err != nil || len(found) != 1 || !strings.HasPrefix(found[0], "group checkout: the template of the label team calls query") {
+	if err != nil || len(found) != 1 || !strings.HasPrefix(found[0], "group checkout: the label team is a template") {
 		t.Fatalf("got %v, %v", found, err)
 	}
-	group["labels"] = map[string]any{"severity": "page", "team": "checkout {{ $labels.instance }}"}
+	group["labels"] = map[string]any{"severity": "page", "team": "checkout"}
 	data, _ = json.Marshal(map[string]any{"groups": []any{group}})
 	if found, err := check(data, metrics); err != nil || len(found) != 0 {
 		t.Fatalf("got %v, %v", found, err)
