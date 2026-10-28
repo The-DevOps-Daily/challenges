@@ -315,6 +315,14 @@ class AlertRuleShapeTests(unittest.TestCase):
         for mutate in (record_alerts, set_alertstate, group_alertname):
             self.assertTrue(rules(mutate)[1], mutate.__name__)
 
+    def test_keep_firing_for_is_refused(self):
+        def keep(doc):
+            doc["groups"][0]["rules"][0]["keep_firing_for"] = "1h"
+
+        problems, unsafe = rules(keep)
+        self.assertFalse(unsafe)
+        self.assertIn("keep_firing_for", " ".join(problems))
+
     def test_severity_can_come_from_the_group(self):
         def group_severity(doc):
             doc["groups"][0]["labels"] = {"severity": "page"}
@@ -524,6 +532,14 @@ class FileFunctionScanTests(unittest.TestCase):
         for name in ("main.tf", "variables.tf", "outputs.tf"):
             path = ROOT / "challenges" / "fix-the-network-module" / name
             self.assertEqual(hclscan.calls(path.read_text()), [], name)
+
+    def test_provider_blocks_are_found(self):
+        for src in ('provider "aws" {\n}', 'provider aws {}', 'provider /* c */ "aws" # x\n {',
+                    'provider "foo" {\n  alias = "exec"\n}'):
+            self.assertEqual(hclscan.provider_blocks(src), 1, src)
+        for src in ("  provider = aws.exec", 'x = provider::aws::arn_parse("a")', "# the provider is set by the caller",
+                    "providers = { aws = aws }"):
+            self.assertEqual(hclscan.provider_blocks(src), 0, src)
 
     def test_wiring_test_overrides_every_resource(self):
         import random

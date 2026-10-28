@@ -42,7 +42,7 @@ You can add other labels and annotations, and recording rules if they help. Each
 
 | Check | Passes when |
 | --- | --- |
-| The rules load | `promtool check rules` passes, and `alerts.yml` defines the four alerts once each, with the `severity` label above, a `summary` and an `https://` `runbook_url`. No rule may write the `ALERTS` series or set the `alertname` or `alertstate` labels. |
+| The rules load | `promtool check rules` passes, and `alerts.yml` defines the four alerts once each, with the `severity` label above, a `summary` and an `https://` `runbook_url`. No rule may write the `ALERTS` series, set the `alertname` or `alertstate` labels, or use `keep_firing_for`. |
 | Instance down | An instance that stays down alerts after 3 minutes, one alert per instance. A 2-minute blip does not alert. An instance of another job does not alert. |
 | Targets missing | When every checkout target disappears, or checkout was never scraped, it alerts after 5 minutes (not after 4, but by 6). Instances that are down but still scraped do not count as missing, and neither do another job's targets. |
 | Error rate | More than 5% of 5xx answers over 5 minutes, even just over 5%, at 1 request per second or more, alerts once that has lasted 5 minutes, not sooner or later, and stops about 5 minutes after the errors end. That holds whatever the 5xx codes and routes are (one scenario has only 502, 503 and 504, all on `/api/cart` and `/api/products`), when a flaky dependency fails one minute in three, and next to a busy healthy service. Under 5% of 5xx (even just under), lots of 4xx, under 1 request per second, and one small route or instance that fails a lot do not alert. |

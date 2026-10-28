@@ -106,6 +106,8 @@ def check(doc) -> tuple[list[str], bool]:
                 return ["Every rule must be a mapping."], True
             if set(rule) - RULE_KEYS:
                 problems.append("A rule has unknown keys.")
+            if rule.get("keep_firing_for") not in (None, "0s", "0m", "0"):
+                problems.append("A rule uses keep_firing_for. An alert must stop once its condition is over.")
             labels = rule.get("labels") or {}
             if not isinstance(labels, dict):
                 return ["Rule labels must be a mapping."], True
@@ -143,7 +145,7 @@ def check(doc) -> tuple[list[str], bool]:
         runbook = annotations.get("runbook_url")
         if not isinstance(runbook, str) or not runbook.startswith("https://"):
             problems.append(f"{name} has no runbook_url annotation with an https:// link.")
-    return problems, False
+    return list(dict.fromkeys(problems)), False
 
 
 def main() -> int:

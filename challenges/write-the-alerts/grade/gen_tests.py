@@ -78,10 +78,16 @@ def values(points: list) -> str:
     return " ".join(out)
 
 
-def counter(per_minute: list[float], jitter: float, gen: Gen) -> list[int]:
-    """Cumulative counter values from per-minute increments, with a little noise."""
+def counter(per_minute: list[float], jitter: float, gen: Gen, reset_at: int | None = None) -> list[int]:
+    """Cumulative counter values from per-minute increments, with a little noise.
+
+    reset_at is the minute the process restarts: the counter starts again
+    from 0, as a real one does.
+    """
     total, out = 0.0, [0]
-    for inc in per_minute:
+    for minute, inc in enumerate(per_minute):
+        if minute == reset_at:
+            total = 0.0
         if inc > 0 and jitter:
             inc *= 1 + gen.uniform(-jitter, jitter)
         total += max(inc, 0.0)
@@ -251,7 +257,7 @@ ROUTES = [(CHECKOUT, 0.5), ("/api/cart", 0.3), ("/api/products", 0.2)]
 
 def request_series(gen: Gen, job: str, instances: list[str], weights: list[float], length: int, phases,
                    codes5: dict[str, float] | None = None, codes4: dict[str, float] | None = None,
-                   routes: list[tuple[str, float]] | None = None) -> list:
+                   routes: list[tuple[str, float]] | None = None, restarts: dict[str, int] | None = None) -> list:
     """http_requests_total series for one job.
 
     phases(minute) -> (requests per second for the whole job, 5xx ratio, 4xx ratio, overrides)
@@ -273,7 +279,7 @@ def request_series(gen: Gen, job: str, instances: list[str], weights: list[float
                     share = 1 - p5 - p4 if code == "200" else p4 * codes4.get(code, 0) + p5 * codes5.get(code, 0)
                     incs.append(n * share)
                 series.append((labels("http_requests_total", job=job, instance=inst, route=route, code=code),
-                               counter(incs, 0.05, gen)))
+                               counter(incs, 0.05, gen, (restarts or {}).get(inst))))
     return series
 
 
@@ -306,9 +312,12 @@ def error_rate(gen: Gen) -> list[tuple[str, dict]]:
     t0 = gen.randint(7, 10)
     length = t0 + 17
     codes = gen.rng.choice(FIVE_XX)
+    # One instance restarts during the outage; its counters start from 0.
     series = request_series(gen, JOB, insts, weights(gen, 3), length,
-                            lambda m: (rps, bad5 if m >= t0 else base5, p4, {}), codes5=codes)
-    series += healthy_job(gen, "payments", rps * gen.uniform(3, 5), length)
+                            lambda m: (rps, bad5 if m >= t0 else base5, p4, {}), codes5=codes,
+                            restarts={insts[0]: t0 + gen.randint(6, 9)})
+    # 6 to 8 times the traffic: mixed in, even 25% of 5xx would drop under 5%.
+    series += healthy_job(gen, "payments", rps * gen.uniform(6, 8), length)
     out.append((
         f"when {bad5:.0%} of checkout requests fail with {codes_text(codes)} at {rps:.0f} requests per second, "
         "it alerts after 5 minutes (not in the first 2), with severity page, even next to a busy healthy service",
@@ -395,7 +404,7 @@ def error_rate(gen: Gen) -> list[tuple[str, dict]]:
         test_file("", "just over", series, [(q, t0 + 12, exp), (q, t0 + 15, exp)]),
     ))
     insts = [gen.instance() for _ in range(3)]
-    rps, p5, p4 = gen.uniform(10, 30), gen.uniform(0.040, 0.044), gen.uniform(0.02, 0.05)
+    rps, p5, p4 = gen.uniform(20, 40), gen.uniform(0.043, 0.046), gen.uniform(0.02, 0.05)
     series = request_series(gen, JOB, insts, weights(gen, 3), length, lambda m: (rps, p5, p4, {}))
     out.append((
         f"a steady {p5:.1%} of 5xx, under 5%, does not alert",
@@ -455,7 +464,8 @@ TAIL = [0.80, 0.08, 0, 0, 0, 0.12, 0, 0]
 SLOW = [0, 0, 0, 0, 0, 1.0, 0, 0]
 
 
-def histogram_series(gen: Gen, inst: str, route: str, length: int, rpm, dist, job: str = JOB) -> list:
+def histogram_series(gen: Gen, inst: str, route: str, length: int, rpm, dist, job: str = JOB,
+                     reset_at: int | None = None) -> list:
     """Bucket, _sum and _count series for one instance and route.
 
     rpm(minute) is requests per minute, dist(minute) the share per bucket.
@@ -476,10 +486,12 @@ def histogram_series(gen: Gen, inst: str, route: str, length: int, rpm, dist, jo
     out = []
     for le, incs in zip(BUCKETS, cumulative):
         out.append((labels("http_request_duration_seconds_bucket", job=job, instance=inst, route=route, le=le),
-                    counter(incs, 0, gen)))
-    count = counter(cumulative[-1], 0, gen)
+                    counter(incs, 0, gen, reset_at)))
+    count = counter(cumulative[-1], 0, gen, reset_at)
     total, sum_pts = 0.0, [0.0]
-    for s in sums:
+    for minute, s in enumerate(sums):
+        if minute == reset_at:
+            total = 0.0
         total += s
         sum_pts.append(round(total, 3))
     out.append((labels("http_request_duration_seconds_count", job=job, instance=inst, route=route), count))
@@ -487,10 +499,13 @@ def histogram_series(gen: Gen, inst: str, route: str, length: int, rpm, dist, jo
     return out
 
 
-def latency_series(gen: Gen, length: int, rps: float, dist_for, inst_weights=None, job: str = JOB) -> list:
+def latency_series(gen: Gen, length: int, rps: float, dist_for, inst_weights=None, job: str = JOB,
+                   restart: tuple[int, int] | None = None) -> list:
     """Histograms for /api/checkout and /api/cart on each instance of a job.
 
-    dist_for(minute, instance_index, route) gives the bucket shares.
+    dist_for(minute, instance_index, route) gives the bucket shares, and
+    restart is (instance_index, minute) for an instance whose counters start
+    again from 0.
     """
     w = inst_weights or weights(gen, 3)
     series = []
@@ -498,7 +513,8 @@ def latency_series(gen: Gen, length: int, rps: float, dist_for, inst_weights=Non
         inst = gen.instance()
         for route, rw in ((CHECKOUT, 0.6), ("/api/cart", 0.4)):
             series += histogram_series(gen, inst, route, length, lambda m, iw=iw, rw=rw: rps * 60 * iw * rw,
-                                       lambda m, idx=idx, route=route: dist_for(m, idx, route), job=job)
+                                       lambda m, idx=idx, route=route: dist_for(m, idx, route), job=job,
+                                       reset_at=restart[1] if restart and restart[0] == idx else None)
     return series
 
 
@@ -514,7 +530,8 @@ def slow_requests(gen: Gen) -> list[tuple[str, dict]]:
     t0 = gen.randint(7, 10)
     length = t0 + 21
     series = latency_series(gen, length, rps,
-                            lambda m, idx, route: TAIL if route == CHECKOUT and m >= t0 else FAST)
+                            lambda m, idx, route: TAIL if route == CHECKOUT and m >= t0 else FAST,
+                            restart=(0, t0 + gen.randint(13, 15)))
     series += latency_series(gen, length, rps * gen.uniform(4, 6), lambda m, idx, route: FAST, job="payments")
     out.append((
         "when 12% of checkout's /api/checkout requests take over a second (p95 well over 500 ms, average under "

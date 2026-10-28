@@ -1,10 +1,13 @@
-"""Find calls to file-reading functions in Terraform files.
+"""Find what a submitted module may not contain: file functions and provider blocks.
 
-  hclscan.py FILE...    prints one line per name found, exits 1 if any
+  hclscan.py FILE...    prints one line per finding, exits 1 if any
 
 The grader's hidden tests rely on the module not reading files: with file()
 it could read a test file, or /proc, and learn values it should not know.
-The module has no need to read files, so these functions are not allowed.
+And a provider block of its own (even an aliased one) could point the AWS
+provider at a shared config file with a credential_process, which runs a
+program during plan. The module needs neither: it reads no files, and the
+caller configures the provider.
 
 In HCL a function call is the function's name, then "(", with only spaces,
 newlines and comments in between. This looks for exactly that in the raw
@@ -53,6 +56,25 @@ def next_code(src: str) -> list[int]:
     return after
 
 
+PROVIDER_RE = re.compile(r"(?<!\w)provider(?!\w|-|::)")
+LABEL_RE = re.compile(r'"[^"\n]*"|[^\W\d][\w-]*')
+
+
+def provider_blocks(src: str) -> int:
+    """Block headers such as provider "aws" { or provider aws {, in the raw text.
+
+    A label with an escaped quote is not matched, but no provider can be
+    named that way, so Terraform would refuse the block anyway.
+    """
+    after = next_code(src)
+    found = 0
+    for match in PROVIDER_RE.finditer(src):
+        label = LABEL_RE.match(src, after[match.end()])
+        if label and after[label.end()] < len(src) and src[after[label.end()]] == "{":
+            found += 1
+    return found
+
+
 def calls(src: str) -> list[str]:
     after = next_code(src)
     found = []
@@ -67,8 +89,12 @@ def main() -> int:
     found = []
     for path in sys.argv[1:]:
         with open(path, encoding="utf-8", errors="replace") as fh:
-            for name in calls(fh.read()):
-                found.append(f"{path.rsplit('/', 1)[-1]} has {name}()")
+            src = fh.read()
+        name_of_file = path.rsplit("/", 1)[-1]
+        for name in calls(src):
+            found.append(f"{name_of_file} has {name}()")
+        if provider_blocks(src):
+            found.append(f"{name_of_file} has a provider block")
     for line in found:
         print(line)
     return 1 if found else 0
