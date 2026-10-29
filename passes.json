@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "updated_at": "2026-10-28T10:39:17Z",
+  "updated_at": "2026-10-29T06:12:45Z",
   "passes": [
     {
       "challenge": "shrink-the-image",
@@ -40,6 +40,16 @@
       "sha": "fa633e69aeb08b3b09cca7e58692bf3acf3e0d97",
       "run_id": 40652197774,
       "passed_at": "2026-10-28T07:46:43Z",
+      "policy": 1
+    },
+    {
+      "challenge": "shrink-the-image",
+      "login": "Sharanam",
+      "user_id": 38852691,
+      "pr": 45,
+      "sha": "bf0fe227bdbb887dc67d1ef241df65abf98083a0",
+      "run_id": 40827757726,
+      "passed_at": "2026-10-29T06:12:31Z",
       "policy": 1
     }
   ]
