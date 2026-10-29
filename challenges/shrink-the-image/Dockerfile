@@ -1,8 +1,8 @@
-FROM python:3.13-slim
+FROM python:3.13-alpine
 
 WORKDIR /app
 
-RUN useradd -u 10001 -r -s /bin/false appuser
+RUN adduser -D -u 10001 appuser # Alpine uses adduser instead of useradd
 
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
