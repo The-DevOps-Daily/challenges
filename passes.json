@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "updated_at": "2026-10-29T06:12:45Z",
+  "updated_at": "2026-11-02T01:45:08Z",
   "passes": [
     {
       "challenge": "shrink-the-image",
@@ -50,6 +50,16 @@
       "sha": "bf0fe227bdbb887dc67d1ef241df65abf98083a0",
       "run_id": 40827757726,
       "passed_at": "2026-10-29T06:12:31Z",
+      "policy": 1
+    },
+    {
+      "challenge": "shrink-the-image",
+      "login": "endigo",
+      "user_id": 1501644,
+      "pr": 46,
+      "sha": "e248103c8d6cd217873cc84253ec23af17361b36",
+      "run_id": 41374010788,
+      "passed_at": "2026-11-02T01:44:55Z",
       "policy": 1
     }
   ]
