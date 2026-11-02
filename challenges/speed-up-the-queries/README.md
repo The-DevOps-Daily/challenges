@@ -104,6 +104,32 @@ python3 -m venv /tmp/grader && /tmp/grader/bin/pip install 'psycopg[binary]==3.3
 docker rm -f shop-db
 ```
 
+### No Docker? Use a free Neon database
+
+[Neon](https://neon.com) runs Postgres in the cloud, and its free plan is enough for this challenge: the data is about 64 MB and loads in a few seconds. Create a project with Postgres 18, copy its connection string from **Connect**, and load everything the same way:
+
+```bash
+export DATABASE_URL='postgresql://...'
+export PGTZ=UTC
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f schema.sql -f indexes.sql -f seed.sql -c 'ANALYZE'
+psql "$DATABASE_URL"
+```
+
+To try an idea without loading the data again, test it on a branch. A branch is a copy of the loaded data; delete it when you are done. [`neonctl`](https://neon.com/docs/cli) is Neon's CLI:
+
+```bash
+neonctl branches create --name attempt-1
+psql "$(neonctl connection-string attempt-1)"
+neonctl branches delete attempt-1
+```
+
+The grader runs `indexes.sql` on empty tables, so for the final check start again from an empty schema:
+
+```bash
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c 'DROP SCHEMA public CASCADE' -c 'CREATE SCHEMA public' \
+  -f schema.sql -f indexes.sql -f seed.sql -c 'ANALYZE'
+```
+
 ## Submit
 
 1. Fork this repo and create a branch.
