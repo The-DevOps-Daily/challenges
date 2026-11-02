@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "updated_at": "2026-11-02T01:45:08Z",
+  "updated_at": "2026-11-02T18:49:41Z",
   "passes": [
     {
       "challenge": "shrink-the-image",
@@ -60,6 +60,16 @@
       "sha": "e248103c8d6cd217873cc84253ec23af17361b36",
       "run_id": 41374010788,
       "passed_at": "2026-11-02T01:44:55Z",
+      "policy": 1
+    },
+    {
+      "challenge": "shrink-the-image",
+      "login": "ChristianPerez34",
+      "user_id": 22486123,
+      "pr": 48,
+      "sha": "4a5884f97ea072f8ab6ada684531b4e310fa732e",
+      "run_id": 41504045195,
+      "passed_at": "2026-11-02T18:49:22Z",
       "policy": 1
     }
   ]
