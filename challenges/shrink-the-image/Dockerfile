@@ -1,15 +1,11 @@
-FROM python:3.13
+FROM python:3.13-slim AS build
+COPY requirements.txt .
+RUN pip install --no-cache-dir --target=/deps -r requirements.txt
 
-RUN apt-get update && apt-get install -y \
-    build-essential \
-    curl \
-    git \
-    vim
-
+FROM gcr.io/distroless/python3-debian13:nonroot
 WORKDIR /app
-COPY . .
-
-RUN pip install -r requirements.txt -r requirements-dev.txt
-
+COPY --from=build /deps /deps
+COPY app.py .
+ENV PYTHONPATH=/deps
 EXPOSE 8000
-CMD ["gunicorn", "--bind", "0.0.0.0:8000", "--workers", "2", "app:app"]
+CMD ["-m", "gunicorn", "--bind", "0.0.0.0:8000", "--workers", "2", "app:app"]
