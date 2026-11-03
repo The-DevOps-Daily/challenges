@@ -1,10 +1,4 @@
-FROM python:3.13
-
-RUN apt-get update && apt-get install -y \
-    build-essential \
-    curl \
-    git \
-    vim
+FROM python:3.11.18-alpine3.23
 
 WORKDIR /app
 COPY . .
