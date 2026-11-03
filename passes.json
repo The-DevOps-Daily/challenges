@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "updated_at": "2026-11-03T02:21:56Z",
+  "updated_at": "2026-11-03T14:20:04Z",
   "passes": [
     {
       "challenge": "fix-the-network-module",
@@ -100,6 +100,16 @@
       "sha": "22e8a68d4ad46a6642ac1a569cd66a33da774cfc",
       "run_id": 41565548976,
       "passed_at": "2026-11-03T02:21:42Z",
+      "policy": 1
+    },
+    {
+      "challenge": "shrink-the-image",
+      "login": "FullOvellas",
+      "user_id": 93091836,
+      "pr": 52,
+      "sha": "acf15d4802e2a6b52294eacc83d381b8468b6e4a",
+      "run_id": 41652427161,
+      "passed_at": "2026-11-03T14:19:50Z",
       "policy": 1
     }
   ]
