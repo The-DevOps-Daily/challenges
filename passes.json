@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "updated_at": "2026-11-03T14:20:04Z",
+  "updated_at": "2026-11-04T11:49:16Z",
   "passes": [
     {
       "challenge": "fix-the-network-module",
@@ -110,6 +110,16 @@
       "sha": "acf15d4802e2a6b52294eacc83d381b8468b6e4a",
       "run_id": 41652427161,
       "passed_at": "2026-11-03T14:19:50Z",
+      "policy": 1
+    },
+    {
+      "challenge": "shrink-the-image",
+      "login": "Pandelissym",
+      "user_id": 54764628,
+      "pr": 53,
+      "sha": "636ab766f1293a3e230d00b065d7518b679a3986",
+      "run_id": 41823907765,
+      "passed_at": "2026-11-04T11:49:02Z",
       "policy": 1
     }
   ]
